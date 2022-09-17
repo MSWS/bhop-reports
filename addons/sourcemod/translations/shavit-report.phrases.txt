@@ -1,0 +1,11 @@
+"Phrases"
+{
+  "CentralReportTrack"
+  {
+    "en" "Select a track to report"
+  }
+  "CentralReportTitle"
+  {
+    "en" "Select a style to report"
+  }
+}

@@ -22,6 +22,7 @@
 #include <sourcemod>
 #include <shavit/core>
 #include <shavit/reports>
+#include <shavit/wr>
 
 Database gH_SQL = null;
 
@@ -30,6 +31,12 @@ char gS_MySQLPrefix[32];
 
 // cache
 ArrayList gH_Reports;
+char gS_MapName[PLATFORM_MAX_PATH];
+int gI_MenuTrack[MAXPLAYERS + 1];
+int gI_MenuStyle[MAXPLAYERS + 1];
+int gI_Styles;
+stylestrings_t gS_StyleStrings[STYLE_LIMIT];
+bool gB_Late = false;
 
 public Plugin myinfo =
 {
@@ -40,19 +47,46 @@ public Plugin myinfo =
     url         = "https://github.com/shavitush/bhoptimer"
 };
 
+public APLRes AskPluginLoad2(Handle plugin, bool late, char[] error, int err) {
+    gB_Late = late;
+    return APLRes_Success;
+}
+
 public void OnPluginStart() {
     gH_Reports = new ArrayList(sizeof(report_t));
+
+    LoadTranslations("shavit-report.phrases");
+
+    RegConsoleCmd("sm_report", Command_Report, "Report a player's record");
+
+    GetTimerSQLPrefix(gS_MySQLPrefix, sizeof(gS_MySQLPrefix));
+    gH_SQL = GetTimerDatabaseHandle();
+
+    if (gB_Late) {
+        Shavit_OnStyleConfigLoaded(Shavit_GetStyleCount());
+    }
+
+    char sQuery[512];
+    FormatEx(sQuery, sizeof(sQuery),
+      "CREATE TABLE IF NOT EXISTS `%sreports` (`id` INT AUTO_INCREMENT NOT NULL, `recordId` INT NOT NULL, `reporter` INT NOT NULL, `reason` VARCHAR(128) NOT NULL, PRIMARY KEY (`id`), FOREIGN KEY (`recordId`) REFERENCES %splayertimes(`id`) ON DELETE CASCADE);",
+      gS_MySQLPrefix, gS_MySQLPrefix);
+    QueryLog(gH_SQL, SQL_Void, sQuery);
 }
 
 public void OnMapStart() {
-    char map[PLATFORM_MAX_PATH];
-    GetCurrentMap(map, sizeof(map));
-    LoadReports(map);
+    GetCurrentMap(gS_MapName, sizeof(gS_MapName));
+    LoadReports();
 }
 
-public void LoadReports(const char[] map) {
+public void Shavit_OnStyleConfigLoaded(int styles) {
+    for (int i = 0; i < styles; i++)
+        Shavit_GetStyleStringsStruct(i, gS_StyleStrings[i]);
+    gI_Styles = styles;
+}
+
+public void LoadReports() {
     char sQuery[512];
-    FormatEx(sQuery, sizeof(sQuery), "SELECT * FROM %sreports WHERE `map` = '%s'", gS_MySQLPrefix, map);
+    FormatEx(sQuery, sizeof(sQuery), "SELECT * FROM %sreports WHERE `map` = '%s'", gS_MySQLPrefix, gS_MapName);
     QueryLog(gH_SQL, SQL_LoadedReports, sQuery);
 }
 
@@ -60,6 +94,119 @@ public Action Command_Reports(int client, int args) {
 }
 
 public Action Command_Report(int client, int args) {
+    // sm_report [track] [style]
+    if (args == 0) {
+        OpenReportTrackMenu(client);
+    }
+    return Plugin_Handled;
+}
+
+void OpenReportTrackMenu(int client) {
+    Menu menu = new Menu(MenuHandler_ReportTrack);
+    menu.SetTitle("%T\n ", "CentralReportTrack", client);
+    for (int i = 0; i < TRACKS_SIZE; i++) {
+        bool records = false;
+
+        for (int j = 0; j < gI_Styles; j++) {
+            if (Shavit_GetWorldRecord(i, j) > 0.0) {
+                records = true;
+                break;
+            }
+        }
+        char sInfo[8];
+        IntToString(i, sInfo, 8);
+        char sTrack[32];
+        GetTrackName(client, i, sTrack, 32);
+        menu.AddItem(sInfo, sTrack, (records) ? ITEMDRAW_DEFAULT : ITEMDRAW_DISABLED);
+    }
+
+    menu.ExitBackButton = true;
+    menu.Display(client, MENU_TIME_FOREVER);
+}
+
+public int UploadReport(report_t report) {
+    char sQuery[512];
+    // gH_SQL.Format(report.reason, sizeof(report.reason), report.reason);
+    gH_SQL.Escape(report.reason, report.reason, sizeof(report.reason));
+    FormatEx(sQuery, sizeof(sQuery), "INSERT INTO `%sreports` (`recordId`, `reporter`, `reason`) VALUES('%d', '%d', '%s'"
+    , gS_MySQLPrefix, report.recordId, report.reporter, report.reason);
+    //   INSERT INTO `reports` (`recordId`, `reporter`, `reason`)VALUES('2', '123', 'Test');
+}
+
+public int MenuHandler_ReportTrack(Menu menu, MenuAction action, int param1, int param2) {
+    if (action == MenuAction_End || action == MenuAction_Cancel) {
+        delete menu;
+        return 0;
+    }
+    char sInfo[8];
+    menu.GetItem(param2, sInfo, 8);
+    int track = StringToInt(sInfo);
+
+    // avoid an exploit
+    if (track >= 0 && track < TRACKS_SIZE) {
+        gI_MenuTrack[param1] = track;
+        OpenReplayStyleMenu(param1, track);
+    }
+    return 0;
+}
+
+void OpenReplayStyleMenu(int client, int track) {
+    char sTrack[32];
+    GetTrackName(client, track, sTrack, 32);
+
+    Menu menu = new Menu(MenuHandler_ReplayStyle);
+    menu.SetTitle("%T (%s)\n ", "CentralReportTitle", client, sTrack);
+
+    int[] styles = new int[gI_Styles];
+    Shavit_GetOrderedStyles(styles, gI_Styles);
+
+    for (int i = 0; i < gI_Styles; i++) {
+        int iStyle = styles[i];
+
+        char sInfo[8];
+        IntToString(iStyle, sInfo, 8);
+
+        float time = Shavit_GetWorldRecord(track, iStyle);
+
+        char sDisplay[64];
+
+        if (time > 0.0) {
+            char sTime[32];
+            FormatSeconds(time, sTime, 32, false);
+
+            FormatEx(sDisplay, 64, "%s - %s", gS_StyleStrings[iStyle].sStyleName, sTime);
+        } else {
+            strcopy(sDisplay, 64, gS_StyleStrings[iStyle].sStyleName);
+        }
+
+        menu.AddItem(sInfo, sDisplay, (time > 0) ? ITEMDRAW_DEFAULT : ITEMDRAW_DISABLED);
+    }
+
+    if (menu.ItemCount == 0) {
+        menu.AddItem("-1", "ERROR");
+    }
+
+    menu.ExitBackButton = true;
+    menu.DisplayAt(client, 0, 300);
+}
+
+public int MenuHandler_ReplayStyle(Menu menu, MenuAction action, int param1, int param2) {
+    if (action != MenuAction_Select) {
+        if (action == MenuAction_End || action == MenuAction_Cancel)
+            delete menu;
+        return 0;
+    }
+
+    char sInfo[16];
+    menu.GetItem(param2, sInfo, 16);
+
+    int style = StringToInt(sInfo);
+
+    if (style < 0 || style >= gI_Styles)
+        return 0;
+
+    gI_MenuStyle[param1] = style;
+    return 0;
 }
 
 public void SQL_LoadedReports(Database db, DBResultSet results, const char[] error, DataPack hPack) {
@@ -78,7 +225,9 @@ public void SQL_LoadedReports(Database db, DBResultSet results, const char[] err
     }
 }
 
-public void Shavit_OnDatabaseLoaded() {
-    GetTimerSQLPrefix(gS_MySQLPrefix, sizeof(gS_MySQLPrefix));
-    gH_SQL = Shavit_GetDatabase();
+public void SQL_Void(Database db, DBResultSet results, const char[] error, DataPack hPack) {
+    if (results == null) {
+        LogError("SQL error! Reason: %s", error);
+        return;
+    }
 }
