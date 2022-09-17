@@ -33,54 +33,46 @@ ArrayList gH_Reports;
 
 public Plugin myinfo =
 {
-  name = "[shavit] Reporting System",
-  author = "MSWS",
-  description = "Create and handle record reports",
-  version = SHAVIT_VERSION,
-	url = "https://github.com/shavitush/bhoptimer"
+    name        = "[shavit] Reporting System",
+    author      = "MSWS",
+    description = "Create and handle record reports",
+    version     = SHAVIT_VERSION,
+    url         = "https://github.com/shavitush/bhoptimer"
 };
 
-public void OnPluginStart()
-{
-  gH_Reports = new ArrayList(sizeof(report_t));
+public void OnPluginStart() {
+    gH_Reports = new ArrayList(sizeof(report_t));
 }
 
-public void OnMapStart()
-{
-  char map[PLATFORM_MAX_PATH];
-  GetCurrentMap(map, sizeof(map));
-  LoadReports(map);
+public void OnMapStart() {
+    char map[PLATFORM_MAX_PATH];
+    GetCurrentMap(map, sizeof(map));
+    LoadReports(map);
 }
 
-public void LoadReports(const char[] map)
-{
-  char sQuery[512];
-  FormatEx(sQuery, sizeof(sQuery), "SELECT * FROM %sreports WHERE `map` = '%s'", gS_MySQLPrefix, map);
-  QueryLog(gH_SQL, SQL_LoadedReports, sQuery);
+public void LoadReports(const char[] map) {
+    char sQuery[512];
+    FormatEx(sQuery, sizeof(sQuery), "SELECT * FROM %sreports WHERE `map` = '%s'", gS_MySQLPrefix, map);
+    QueryLog(gH_SQL, SQL_LoadedReports, sQuery);
 }
 
-public void SQL_LoadedReports(Database db, DBResultSet results, const char[] error, DataPack hPack)
-{
-	if(results == null)
-	{
-		LogError("Timer error! Failed to load report data. Reason: %s", error);
-		return;
-	}
+public void SQL_LoadedReports(Database db, DBResultSet results, const char[] error, DataPack hPack) {
+    if (results == null) {
+        LogError("Timer error! Failed to load report data. Reason: %s", error);
+        return;
+    }
 
-  while (results.FetchRow())
-  {
-    report_t report;
-    report.recordId = results.FetchInt(0);
-    report.reporter = results.FetchInt(1);
-    report.reported = results.FetchInt(2);
-    results.FetchString(3, report.reason, sizeof(report.reason));
-    gH_Reports.PushArray(report);
-  }
-  
+    while (results.FetchRow()) {
+        report_t report;
+        report.recordId = results.FetchInt(0);
+        report.reporter = results.FetchInt(1);
+        report.reported = results.FetchInt(2);
+        results.FetchString(3, report.reason, sizeof(report.reason));
+        gH_Reports.PushArray(report);
+    }
 }
 
-public void Shavit_OnDatabaseLoaded()
-{
-  GetTimerSQLPrefix(gS_MySQLPrefix, sizeof(gS_MySQLPrefix));
-  gH_SQL = Shavit_GetDatabase();
+public void Shavit_OnDatabaseLoaded() {
+    GetTimerSQLPrefix(gS_MySQLPrefix, sizeof(gS_MySQLPrefix));
+    gH_SQL = Shavit_GetDatabase();
 }
