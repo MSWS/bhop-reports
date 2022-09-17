@@ -56,6 +56,12 @@ public void LoadReports(const char[] map) {
     QueryLog(gH_SQL, SQL_LoadedReports, sQuery);
 }
 
+public Action Command_Reports(int client, int args) {
+}
+
+public Action Command_Report(int client, int args) {
+}
+
 public void SQL_LoadedReports(Database db, DBResultSet results, const char[] error, DataPack hPack) {
     if (results == null) {
         LogError("Timer error! Failed to load report data. Reason: %s", error);
