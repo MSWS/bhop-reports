@@ -41,6 +41,16 @@ int gI_Styles;
 stylestrings_t gS_StyleStrings[STYLE_LIMIT];
 chatstrings_t gS_ChatStrings;
 bool gB_Late = false;
+bool gB_Chat[MAXPLAYERS + 1];
+
+// reasons
+char gS_Reasons[5][64] = {
+    "Improper Zones (Start)",
+    "Improper Zones (End)",
+    "Bugged Record",
+    "Cheated Record",
+    "Other",
+};
 
 public Plugin myinfo =
 {
@@ -101,32 +111,60 @@ public void LoadReports() {
 }
 
 public Action Command_Reports(int client, int args) {
+
     return Plugin_Handled;
 }
 
 public Action Command_Report(int client, int args) {
-    // sm_report [track] [style]
-    if (args == 0) {
+    // sm_report [track] [style] [reason]
+    if (args == 0 && IsClientInGame(client)) {
         OpenReportTrackMenu(client);
-    } else if (args != 2)
         return Plugin_Handled;
+    }
 
-    char sArgs[2][8];
-    GetCmdArg(1, sArgs[0], sizeof(sArgs[]));
-    GetCmdArg(2, sArgs[1], sizeof(sArgs[]));
-    int track = StringToInt(sArgs[0]), style = StringToInt(sArgs[1]), recordId;
-    Shavit_GetWRRecordID(style, recordId, track);
-    if (recordId == -1) {
+    char command[200];
+    GetCmdArgString(command, sizeof(command));
+
+    char sArgs[3][128];
+    ExplodeString(command, " ", sArgs, sizeof(sArgs), sizeof(sArgs[]), true);
+
+    if (args == 1) {
+        OpenReportStyleMenu(client, gI_MenuTrack[client]);
+        return Plugin_Handled;
+    }
+
+    if (args == 2) {
+        OpenReportReasonMenu(client);
+        return Plugin_Handled;
+    }
+
+    report_t report;
+    int track = StringToInt(sArgs[0]), style = StringToInt(sArgs[1]);
+    Shavit_GetWRRecordID(style, report.recordId, track);
+    if (report.recordId == -1) {
         Shavit_PrintToChat(client, "%T", "UnknownRecord", client, gS_ChatStrings.sWarning, gS_ChatStrings.sText);
         return Plugin_Handled;
     }
-    Shavit_PrintToChat(client, "Record ID: %d", recordId);
+
+    report.reporter = GetClientSerial(client);
+    strcopy(report.reason, sizeof(report.reason), sArgs[2]);
+    UploadReport(report);
+    Shavit_PrintToChat(client, "%T", "ReportSubmitted", client);
     return Plugin_Handled;
+}
+
+public Action OnClientSayCommand(int client, const char[] cmd, const char[] args) {
+    if (!gB_Chat[client])
+        return Plugin_Continue;
+    gB_Chat[client] = false;
+    FakeClientCommand(client, "sm_report %d %d %s", gI_MenuTrack[client], gI_MenuStyle[client], args);
+    return Plugin_Stop;
 }
 
 void OpenReportTrackMenu(int client) {
     Menu menu = new Menu(MenuHandler_ReportTrack);
     menu.SetTitle("%T\n ", "CentralReportTrack", client);
+    int validTrack = -1;
     for (int i = 0; i < TRACKS_SIZE; i++) {
         bool records = false;
 
@@ -136,23 +174,36 @@ void OpenReportTrackMenu(int client) {
                 break;
             }
         }
+        if (!records)
+            continue;
+        validTrack = i;
         char sInfo[8];
         IntToString(i, sInfo, 8);
         char sTrack[32];
         GetTrackName(client, i, sTrack, 32);
-        menu.AddItem(sInfo, sTrack, (records) ? ITEMDRAW_DEFAULT : ITEMDRAW_DISABLED);
+        menu.AddItem(sInfo, sTrack, ITEMDRAW_DEFAULT);
     }
 
+    if (menu.ItemCount == 0) {
+        delete menu;
+        Shavit_PrintToChat(client, "%T", "NoRecords", client, gS_ChatStrings.sWarning, gS_ChatStrings.sText);
+        return;
+    } else if (menu.ItemCount == 1) {
+        delete menu;
+        gI_MenuTrack[client] = validTrack;
+        OpenReportStyleMenu(client, validTrack);
+        return;
+    }
     menu.ExitBackButton = true;
     menu.Display(client, MENU_TIME_FOREVER);
 }
 
 public void UploadReport(report_t report) {
     char sQuery[512];
-    // gH_SQL.Format(report.reason, sizeof(report.reason), report.reason);
     gH_SQL.Escape(report.reason, report.reason, sizeof(report.reason));
-    FormatEx(sQuery, sizeof(sQuery), "INSERT INTO `%sreports` (`recordId`, `reporter`, `reason`) VALUES('%d', '%d', '%s'", gS_MySQLPrefix, report.recordId, report.reporter, report.reason);
+    FormatEx(sQuery, sizeof(sQuery), "INSERT INTO `%sreports` (`recordId`, `reporter`, `reason`) VALUES('%d', '%d', '%s');", gS_MySQLPrefix, report.recordId, report.reporter, report.reason);
     QueryLog(gH_SQL, SQL_Void, sQuery);
+    gH_Reports.PushArray(report);
 }
 
 public int MenuHandler_ReportTrack(Menu menu, MenuAction action, int param1, int param2) {
@@ -167,12 +218,12 @@ public int MenuHandler_ReportTrack(Menu menu, MenuAction action, int param1, int
     // avoid an exploit
     if (track >= 0 && track < TRACKS_SIZE) {
         gI_MenuTrack[param1] = track;
-        OpenReplayStyleMenu(param1, track);
+        FakeClientCommand(param1, "sm_report %d", track);
     }
     return 0;
 }
 
-void OpenReplayStyleMenu(int client, int track) {
+void OpenReportStyleMenu(int client, int track) {
     char sTrack[32];
     GetTrackName(client, track, sTrack, 32);
 
@@ -182,34 +233,61 @@ void OpenReplayStyleMenu(int client, int track) {
     int[] styles = new int[gI_Styles];
     Shavit_GetOrderedStyles(styles, gI_Styles);
 
+    int valid = -1;
     for (int i = 0; i < gI_Styles; i++) {
         int iStyle = styles[i];
 
         char sInfo[8];
         IntToString(iStyle, sInfo, 8);
 
-        float time = Shavit_GetWorldRecord(track, iStyle);
-
+        float time = Shavit_GetWorldRecord(iStyle, track);
+        if (time <= 0)
+            continue;
+        valid = iStyle;
         char sDisplay[64];
+        char sTime[32];
+        FormatSeconds(time, sTime, 32, false);
 
-        if (time > 0.0) {
-            char sTime[32];
-            FormatSeconds(time, sTime, 32, false);
+        FormatEx(sDisplay, 64, "%s - %s", gS_StyleStrings[iStyle].sStyleName, sTime);
 
-            FormatEx(sDisplay, 64, "%s - %s", gS_StyleStrings[iStyle].sStyleName, sTime);
-        } else {
-            strcopy(sDisplay, 64, gS_StyleStrings[iStyle].sStyleName);
-        }
-
-        menu.AddItem(sInfo, sDisplay, (time > 0) ? ITEMDRAW_DEFAULT : ITEMDRAW_DISABLED);
+        menu.AddItem(sInfo, sDisplay, ITEMDRAW_DEFAULT);
     }
 
     if (menu.ItemCount == 0) {
         menu.AddItem("-1", "ERROR");
+    } else if (menu.ItemCount == 1) {
+        gI_MenuStyle[client] = valid;
+        FakeClientCommand(client, "sm_report %d %d", track, valid);
+        delete menu;
     }
 
-    menu.ExitBackButton = true;
-    menu.DisplayAt(client, 0, 300);
+    menu.Display(client, 60);
+}
+
+void OpenReportReasonMenu(int client) {
+    Menu menu = new Menu(MenuHandler_ReportReason);
+    menu.SetTitle("%T\n ", "CentralReportReason", client);
+    for (int i = 0; i < sizeof(gS_Reasons); i++) {
+        char sInfo[sizeof(gS_Reasons[])];
+        IntToString(i, sInfo, sizeof(sInfo));
+        menu.AddItem(sInfo, gS_Reasons[i], ITEMDRAW_DEFAULT);
+    }
+    menu.Display(client, 60);
+}
+
+int MenuHandler_ReportReason(Menu menu, MenuAction action, int param1, int param2) {
+    if (action == MenuAction_End || action == MenuAction_Cancel) {
+        delete menu;
+        return 0;
+    }
+    if (param2 == sizeof(gS_Reasons) - 1) {
+        // Prompt for chat
+        gB_Chat[param1] = true;
+        Shavit_PrintToChat(param1, "%T", "PendingReason", param1);
+        return 0;
+    }
+    FakeClientCommand(param1, "sm_report %d %d %s", gI_MenuTrack[param1], gI_MenuStyle[param1], gS_Reasons[param2]);
+    return 0;
 }
 
 public int MenuHandler_ReplayStyle(Menu menu, MenuAction action, int param1, int param2) {
@@ -228,6 +306,7 @@ public int MenuHandler_ReplayStyle(Menu menu, MenuAction action, int param1, int
         return 0;
 
     gI_MenuStyle[param1] = style;
+    FakeClientCommand(param1, "sm_report %d %d", gI_MenuTrack[param1], style);
     return 0;
 }
 
@@ -237,6 +316,7 @@ public void SQL_LoadedReports(Database db, DBResultSet results, const char[] err
         return;
     }
 
+    gH_Reports.Clear();
     while (results.FetchRow()) {
         report_t report;
         report.id       = results.FetchInt(0);

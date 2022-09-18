@@ -8,9 +8,26 @@
   {
     "en" "Select a style to report"
   }
+  "CentralReportReason"
+  {
+    "en" "Report Reason"
+  }
+  "PendingReason"
+  {
+    "en" "Please type the reason for your report"
+  }
   "UnknownRecord"
   {
     "#format" "{1,s},{2,s}"
     "en" "{1}ERROR{2}: Unable to find a record."
+  }
+  "ReportSubmitted"
+  {
+    "en" "Your report has been submitted."
+  }
+  "NoRecords"
+  {
+    "#format" "{1,s},{2,s}"
+    "en" "{1}ERROR{2}: No records found."
   }
 }
