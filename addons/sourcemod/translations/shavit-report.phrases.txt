@@ -1,14 +1,18 @@
 "Phrases"
 {
-  "CentralReportTrack"
+  "ReportViewTitle"
+  {
+    "en" "Reports"
+  }
+  "ReportTrackTitle"
   {
     "en" "Select a track to report"
   }
-  "CentralReportTitle"
+  "ReportStyleTitle"
   {
     "en" "Select a style to report"
   }
-  "CentralReportReason"
+  "ReportReasonTitle"
   {
     "en" "Report Reason"
   }
@@ -24,6 +28,11 @@
   "ReportSubmitted"
   {
     "en" "Your report has been submitted."
+  }
+  "NoReports"
+  {
+    "#format" "{1,s},{2,s}"
+    "en" "{1}ERROR{2}: No reports found."
   }
   "NoRecords"
   {

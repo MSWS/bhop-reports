@@ -72,6 +72,7 @@ public void OnPluginStart() {
     LoadTranslations("shavit-report.phrases");
     LoadTranslations("shavit-common.phrases");
 
+    RegAdminCmd("sm_reports", Command_Reports, ADMFLAG_BAN, "View player reports");
     RegConsoleCmd("sm_report", Command_Report, "Report a player's record");
 
     GetTimerSQLPrefix(gS_MySQLPrefix, sizeof(gS_MySQLPrefix));
@@ -105,13 +106,18 @@ public void Shavit_OnChatConfigLoaded() {
 }
 
 public void LoadReports() {
+    LogMessage("Loading reports...");
     char sQuery[512];
-    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter' FROM `playertimes` AS times INNER JOIN `reports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) WHERE `map` = '%';", gS_MapName);
+    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style` FROM `playertimes` AS times INNER JOIN `reports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) WHERE `map` = '%s';", gS_MapName);
     QueryLog(gH_SQL, SQL_LoadedReports, sQuery);
 }
 
 public Action Command_Reports(int client, int args) {
-
+    if(gH_Reports.Length == 0) {
+        Shavit_PrintToChat(client, "%T", "NoReports", client, gS_ChatStrings.sWarning, gS_ChatStrings.sText);
+        return Plugin_Handled;
+    }
+    OpenReportViewMenu(client);
     return Plugin_Handled;
 }
 
@@ -161,9 +167,37 @@ public Action OnClientSayCommand(int client, const char[] cmd, const char[] args
     return Plugin_Stop;
 }
 
+void OpenReportViewMenu(int client) {
+    Menu menu = new Menu(MenuHandler_ReportView);
+    menu.SetTitle("%T\n ", "ReportViewTitle", client);
+    for (int i = 0; i < gH_Reports.Length && i < 50; i++) {
+        report_t report;
+        gH_Reports.GetArray(i, report);
+        char line[64];
+        char trackName[32];
+        GetTrackName(client, report.track, trackName, sizeof(trackName));
+        char sTime[32];
+        float time = Shavit_GetWorldRecord(report.style, report.track);
+        FormatSeconds(time, sTime, sizeof(sTime), false);
+        Format(line, sizeof(line), "%s > %s's %s %s (%s)", report.reporterName, report.targetName, gS_StyleStrings[report.style], trackName, sTime);
+        char ind[3];
+        IntToString(i, ind, sizeof(ind));
+        menu.AddItem(ind, line);
+    }
+    menu.Display(client, MENU_TIME_FOREVER);
+}
+
+int MenuHandler_ReportView(Menu menu, MenuAction action, int param1, int param2) {
+    if (action == MenuAction_End || action == MenuAction_Cancel) {
+        delete menu;
+        return 0;
+    }
+    return 0;
+}
+
 void OpenReportTrackMenu(int client) {
     Menu menu = new Menu(MenuHandler_ReportTrack);
-    menu.SetTitle("%T\n ", "CentralReportTrack", client);
+    menu.SetTitle("%T\n ", "ReportTrackTitle", client);
     int validTrack = -1;
     for (int i = 0; i < TRACKS_SIZE; i++) {
         bool records = false;
@@ -198,14 +232,6 @@ void OpenReportTrackMenu(int client) {
     menu.Display(client, MENU_TIME_FOREVER);
 }
 
-public void UploadReport(report_t report) {
-    char sQuery[512];
-    gH_SQL.Escape(report.reason, report.reason, sizeof(report.reason));
-    FormatEx(sQuery, sizeof(sQuery), "INSERT INTO `%sreports` (`recordId`, `reporter`, `reason`) VALUES('%d', '%d', '%s');", gS_MySQLPrefix, report.recordId, report.reporter, report.reason);
-    QueryLog(gH_SQL, SQL_Void, sQuery);
-    gH_Reports.PushArray(report);
-}
-
 public int MenuHandler_ReportTrack(Menu menu, MenuAction action, int param1, int param2) {
     if (action == MenuAction_End || action == MenuAction_Cancel) {
         delete menu;
@@ -228,7 +254,7 @@ void OpenReportStyleMenu(int client, int track) {
     GetTrackName(client, track, sTrack, 32);
 
     Menu menu = new Menu(MenuHandler_ReplayStyle);
-    menu.SetTitle("%T (%s)\n ", "CentralReportTitle", client, sTrack);
+    menu.SetTitle("%T (%s)\n ", "ReportStyleTitle", client, sTrack);
 
     int[] styles = new int[gI_Styles];
     Shavit_GetOrderedStyles(styles, gI_Styles);
@@ -266,7 +292,7 @@ void OpenReportStyleMenu(int client, int track) {
 
 void OpenReportReasonMenu(int client) {
     Menu menu = new Menu(MenuHandler_ReportReason);
-    menu.SetTitle("%T\n ", "CentralReportReason", client);
+    menu.SetTitle("%T\n ", "ReportReasonTitle", client);
     for (int i = 0; i < sizeof(gS_Reasons); i++) {
         char sInfo[sizeof(gS_Reasons[])];
         IntToString(i, sInfo, sizeof(sInfo));
@@ -325,8 +351,19 @@ public void SQL_LoadedReports(Database db, DBResultSet results, const char[] err
         results.FetchString(3, report.reason, sizeof(report.reason));
         results.FetchString(4, report.targetName, sizeof(report.reporterName));
         results.FetchString(5, report.reporterName, sizeof(report.reporterName));
+        report.track = results.FetchInt(6);
+        report.style = results.FetchInt(7);
         gH_Reports.PushArray(report);
     }
+    LogMessage("Loaded %d reports", gH_Reports.Length);
+}
+
+public void UploadReport(report_t report) {
+    char sQuery[512];
+    gH_SQL.Escape(report.reason, report.reason, sizeof(report.reason));
+    FormatEx(sQuery, sizeof(sQuery), "INSERT INTO `%sreports` (`recordId`, `reporter`, `reason`) VALUES('%d', '%d', '%s');", gS_MySQLPrefix, report.recordId, report.reporter, report.reason);
+    QueryLog(gH_SQL, SQL_Void, sQuery);
+    gH_Reports.PushArray(report);
 }
 
 public void SQL_Void(Database db, DBResultSet results, const char[] error, DataPack hPack) {
