@@ -8,4 +8,9 @@
   {
     "en" "Select a style to report"
   }
+  "UnknownRecord"
+  {
+    "#format" "{1,s},{2,s}"
+    "en" "{1}ERROR{2}: Unable to find a record."
+  }
 }

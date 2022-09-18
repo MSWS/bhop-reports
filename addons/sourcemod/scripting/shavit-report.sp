@@ -39,6 +39,7 @@ int gI_MenuTrack[MAXPLAYERS + 1];
 int gI_MenuStyle[MAXPLAYERS + 1];
 int gI_Styles;
 stylestrings_t gS_StyleStrings[STYLE_LIMIT];
+chatstrings_t gS_ChatStrings;
 bool gB_Late = false;
 
 public Plugin myinfo =
@@ -59,6 +60,7 @@ public void OnPluginStart() {
     gH_Reports = new ArrayList(sizeof(report_t));
 
     LoadTranslations("shavit-report.phrases");
+    LoadTranslations("shavit-common.phrases");
 
     RegConsoleCmd("sm_report", Command_Report, "Report a player's record");
 
@@ -67,6 +69,7 @@ public void OnPluginStart() {
 
     if (gB_Late) {
         Shavit_OnStyleConfigLoaded(Shavit_GetStyleCount());
+        Shavit_OnChatConfigLoaded();
     }
 
     char sQuery[512];
@@ -87,9 +90,12 @@ public void Shavit_OnStyleConfigLoaded(int styles) {
     gI_Styles = styles;
 }
 
+public void Shavit_OnChatConfigLoaded() {
+    Shavit_GetChatStringsStruct(gS_ChatStrings);
+}
+
 public void LoadReports() {
     char sQuery[512];
-    // SELECT report.id, report.recordId, clients.name, report.reason FROM `playertimes` AS times INNER JOIN `reports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) WHERE `map` = '???' ;
     FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter' FROM `playertimes` AS times INNER JOIN `reports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) WHERE `map` = '%';", gS_MapName);
     QueryLog(gH_SQL, SQL_LoadedReports, sQuery);
 }
@@ -102,7 +108,19 @@ public Action Command_Report(int client, int args) {
     // sm_report [track] [style]
     if (args == 0) {
         OpenReportTrackMenu(client);
+    } else if (args != 2)
+        return Plugin_Handled;
+
+    char sArgs[2][8];
+    GetCmdArg(1, sArgs[0], sizeof(sArgs[]));
+    GetCmdArg(2, sArgs[1], sizeof(sArgs[]));
+    int track = StringToInt(sArgs[0]), style = StringToInt(sArgs[1]), recordId;
+    Shavit_GetWRRecordID(style, recordId, track);
+    if (recordId == -1) {
+        Shavit_PrintToChat(client, "%T", "UnknownRecord", client, gS_ChatStrings.sWarning, gS_ChatStrings.sText);
+        return Plugin_Handled;
     }
+    Shavit_PrintToChat(client, "Record ID: %d", recordId);
     return Plugin_Handled;
 }
 
