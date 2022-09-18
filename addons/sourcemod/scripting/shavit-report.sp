@@ -24,6 +24,9 @@
 #include <shavit/reports>
 #include <shavit/wr>
 
+#pragma newdecls required
+#pragma semicolon 1
+
 Database gH_SQL = null;
 
 // table prefix
@@ -87,12 +90,12 @@ public void Shavit_OnStyleConfigLoaded(int styles) {
 public void LoadReports() {
     char sQuery[512];
     // SELECT report.id, report.recordId, clients.name, report.reason FROM `playertimes` AS times INNER JOIN `reports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) WHERE `map` = '???' ;
-    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter' FROM `playertimes` AS times INNER JOIN `reports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) WHERE `map` = '%';", gS_MapName)
-      // FormatEx(sQuery, sizeof(sQuery), "SELECT * FROM %sreports WHERE `map` = '%s'", gS_MySQLPrefix, gS_MapName);
-      QueryLog(gH_SQL, SQL_LoadedReports, sQuery);
+    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter' FROM `playertimes` AS times INNER JOIN `reports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) WHERE `map` = '%';", gS_MapName);
+    QueryLog(gH_SQL, SQL_LoadedReports, sQuery);
 }
 
 public Action Command_Reports(int client, int args) {
+    return Plugin_Handled;
 }
 
 public Action Command_Report(int client, int args) {
@@ -126,11 +129,12 @@ void OpenReportTrackMenu(int client) {
     menu.Display(client, MENU_TIME_FOREVER);
 }
 
-public int UploadReport(report_t report) {
+public void UploadReport(report_t report) {
     char sQuery[512];
     // gH_SQL.Format(report.reason, sizeof(report.reason), report.reason);
     gH_SQL.Escape(report.reason, report.reason, sizeof(report.reason));
     FormatEx(sQuery, sizeof(sQuery), "INSERT INTO `%sreports` (`recordId`, `reporter`, `reason`) VALUES('%d', '%d', '%s'", gS_MySQLPrefix, report.recordId, report.reporter, report.reason);
+    QueryLog(gH_SQL, SQL_Void, sQuery);
 }
 
 public int MenuHandler_ReportTrack(Menu menu, MenuAction action, int param1, int param2) {
