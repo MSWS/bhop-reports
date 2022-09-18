@@ -131,7 +131,7 @@ void OpenReportTrackMenu(int client) {
         bool records = false;
 
         for (int j = 0; j < gI_Styles; j++) {
-            if (Shavit_GetWorldRecord(i, j) > 0.0) {
+            if (Shavit_GetWorldRecord(j, i) > 0.0) {
                 records = true;
                 break;
             }
