@@ -86,8 +86,10 @@ public void Shavit_OnStyleConfigLoaded(int styles) {
 
 public void LoadReports() {
     char sQuery[512];
-    FormatEx(sQuery, sizeof(sQuery), "SELECT * FROM %sreports WHERE `map` = '%s'", gS_MySQLPrefix, gS_MapName);
-    QueryLog(gH_SQL, SQL_LoadedReports, sQuery);
+    // SELECT report.id, report.recordId, clients.name, report.reason FROM `playertimes` AS times INNER JOIN `reports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) WHERE `map` = '???' ;
+    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter' FROM `playertimes` AS times INNER JOIN `reports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) WHERE `map` = '%';", gS_MapName)
+      // FormatEx(sQuery, sizeof(sQuery), "SELECT * FROM %sreports WHERE `map` = '%s'", gS_MySQLPrefix, gS_MapName);
+      QueryLog(gH_SQL, SQL_LoadedReports, sQuery);
 }
 
 public Action Command_Reports(int client, int args) {
@@ -128,9 +130,7 @@ public int UploadReport(report_t report) {
     char sQuery[512];
     // gH_SQL.Format(report.reason, sizeof(report.reason), report.reason);
     gH_SQL.Escape(report.reason, report.reason, sizeof(report.reason));
-    FormatEx(sQuery, sizeof(sQuery), "INSERT INTO `%sreports` (`recordId`, `reporter`, `reason`) VALUES('%d', '%d', '%s'"
-    , gS_MySQLPrefix, report.recordId, report.reporter, report.reason);
-    //   INSERT INTO `reports` (`recordId`, `reporter`, `reason`)VALUES('2', '123', 'Test');
+    FormatEx(sQuery, sizeof(sQuery), "INSERT INTO `%sreports` (`recordId`, `reporter`, `reason`) VALUES('%d', '%d', '%s'", gS_MySQLPrefix, report.recordId, report.reporter, report.reason);
 }
 
 public int MenuHandler_ReportTrack(Menu menu, MenuAction action, int param1, int param2) {
@@ -217,10 +217,12 @@ public void SQL_LoadedReports(Database db, DBResultSet results, const char[] err
 
     while (results.FetchRow()) {
         report_t report;
-        report.recordId = results.FetchInt(0);
-        report.reporter = results.FetchInt(1);
-        report.reported = results.FetchInt(2);
+        report.id       = results.FetchInt(0);
+        report.recordId = results.FetchInt(1);
+        report.reporter = results.FetchInt(2);
         results.FetchString(3, report.reason, sizeof(report.reason));
+        results.FetchString(4, report.targetName, sizeof(report.reporterName));
+        results.FetchString(5, report.reporterName, sizeof(report.reporterName));
         gH_Reports.PushArray(report);
     }
 }
