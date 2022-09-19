@@ -6,8 +6,20 @@
   }
   "ReportInfoTitle"
   {
-    "#format" "{1:d},{2:s},{3:s},{4:s},{5:s},{6:s}"
-    "en" "Report #{1}\n{2} reported {3}'s\n{4} {5} ran in {6}\nReason: {7}"
+    "#format" "{1:d},{2:s},{3:s},{4:s},{5:s},{6:s},{7:s}"
+    "en" "Report #{1}\n{2} reported {3}'s\n{4} {5} run ({6})\nReason: {7}"
+  }
+  "ReportMenuView"
+  {
+    "en" "View Report"
+  }
+  "ReportMenuAccept"
+  {
+    "en" "Accept Report\nMarks the report as valid"
+  }
+  "ReportMenuReject"
+  {
+    "en" "Reject Report\nMarks the report as invalid"
   }
   "ReportTrackTitle"
   {
@@ -43,5 +55,10 @@
   {
     "#format" "{1:s},{2:s}"
     "en" "{1}ERROR{2}: No records found."
+  }
+  "UnknownError"
+  {
+    "#format" "{1:s},{2:s},{3:s}"
+    "en" "{1}ERROR: {2}{3}. Please contact an administrator."
   }
 }

@@ -23,6 +23,8 @@
 #include <shavit/core>
 #include <shavit/reports>
 #include <shavit/wr>
+#include <shavit/replay-playback>
+#include <shavit/steamid-stocks>
 
 #pragma newdecls required
 #pragma semicolon 1
@@ -35,6 +37,7 @@ char gS_MySQLPrefix[32];
 // cache
 ArrayList gH_Reports;
 char gS_MapName[PLATFORM_MAX_PATH];
+int gI_ActiveReport[MAXPLAYERS + 1];
 int gI_MenuTrack[MAXPLAYERS + 1];
 int gI_MenuStyle[MAXPLAYERS + 1];
 int gI_Styles;
@@ -117,7 +120,17 @@ public Action Command_Reports(int client, int args) {
         Shavit_PrintToChat(client, "%T", "NoReports", client, gS_ChatStrings.sWarning, gS_ChatStrings.sText);
         return Plugin_Handled;
     }
-    OpenReportViewMenu(client);
+    gI_ActiveReport[client] = -1;
+    int reportId            = -1;
+    if (args == 1) {
+        char sId[3];
+        GetCmdArg(1, sId, sizeof(sId));
+        reportId = StringToInt(sId);
+        if (reportId < 0 || reportId >= gH_Reports.Length)
+            return Plugin_Handled;
+        gI_ActiveReport[client] = reportId;
+    }
+    OpenReportViewMenu(client, reportId);
     return Plugin_Handled;
 }
 
@@ -152,7 +165,7 @@ public Action Command_Report(int client, int args) {
         return Plugin_Handled;
     }
 
-    report.reporter = GetClientSerial(client);
+    report.reporter = GetSteamAccountID(client);
     strcopy(report.reason, sizeof(report.reason), sArgs[2]);
     UploadReport(report);
     Shavit_PrintToChat(client, "%T", "ReportSubmitted", client);
@@ -194,9 +207,15 @@ void OpenReportViewMenu(int client, int reportIndex = -1) {
     char trackName[32], sTime[32];
     GetTrackName(client, report.track, trackName, sizeof(trackName));
     FormatSeconds(Shavit_GetWorldRecord(report.style, report.track), sTime, sizeof(sTime), true);
-    menu.SetTitle("%T\n ", "ReportViewTitle", client, report.id, report.reporterName, report.targetName, trackName, gS_StyleStrings[report.style], sTime, report.reason);
-    menu.AddItem("View", "Who gives a");
-    menu.AddItem("Delete", "Shit");
+    menu.SetTitle("%T\n ", "ReportInfoTitle", client, report.id, report.reporterName, report.targetName, trackName, gS_StyleStrings[report.style], sTime, report.reason);
+    menu.AddItem("View", "View Replay", Shavit_IsReplayDataLoaded(report.style, report.track) ? ITEMDRAW_DEFAULT : ITEMDRAW_DISABLED);
+
+    char line[64];
+    Format(line, sizeof(line), "%T", "ReportMenuAccept", client);
+    menu.AddItem("Accept", line);
+
+    Format(line, sizeof(line), "%T", "ReportMenuReject", client);
+    menu.AddItem("Reject", line);
     menu.Display(client, MENU_TIME_FOREVER);
 }
 
@@ -211,11 +230,64 @@ int MenuHandler_ReportView(Menu menu, MenuAction action, int param1, int param2)
 
 int MenuHandler_ReportAction(Menu menu, MenuAction action, int param1, int param2) {
     if (action == MenuAction_End || action == MenuAction_Cancel) {
+        if (action == MenuAction_Cancel && param2 == MenuCancel_Exit) {
+            FakeClientCommand(param1, "sm_reports");
+        }
+        gI_ActiveReport[param1] = -1;
         delete menu;
         return 0;
     }
-    PrintToChat(param1, "Amen!");
+    if (gI_ActiveReport[param1] == -1) {
+        Shavit_PrintToChat(param1, "%T", "UnknownError", param1, gS_ChatStrings.sWarning, "Invalid gI_ActiveReport value", gS_ChatStrings.sText);
+        delete menu;
+        return 0;
+    }
+    char line[16];
+    GetMenuItem(menu, param2, line, sizeof(line));
+    report_t report;
+    gH_Reports.GetArray(gI_ActiveReport[param1], report);
+    if (StrEqual(line, "View")) {
+        Shavit_StartReplay(report.style, report.track, -1.0, param1, Replay_Dynamic, Replay_Dynamic, true);
+        FakeClientCommand(param1, "sm_reports %d", gI_ActiveReport[param1]);
+        return 0;
+    } else if (StrEqual(line, "Accept")) {
+        OpenReportAcceptMenu(param1);
+    } else if (StrEqual(line, "Reject")) {
+        OpenReportRejectMenu(param1);
+    } else if (StrEqual(line, "Delete")) {
+        Shavit_DeleteWR(report.style, report.track, gS_MapName, -1, -1, true, true);
+    } else if (StrEqual(line, "Ban")) {
+        Shavit_DeleteWR(report.style, report.track, gS_MapName, -1, -1, true, true);
+        // Ban the player
+    } else if (StrEqual(line, "Wipe")) {
+        char buff[32];
+        AccountIDToSteamID64(report.reported, buff, sizeof(buff));
+        FakeClientCommand(param1, "sm_wipeplayer %s", buff);
+    } else if (StrEqual(line, "Reject")) {
+    } else if (StrEqual(line, "Blacklist")) {
+    } else if (StrEqual(line, "Blackban")) {
+    } else {
+        Shavit_PrintToChat(param1, "%T", "UnknownError", param1, gS_ChatStrings.sWarning, "Invalid MenuItem", gS_ChatStrings.sText);
+    }
     return 0;
+}
+
+void OpenReportAcceptMenu(int client) {
+    Menu menu = new Menu(MenuHandler_ReportAction);
+    menu.SetTitle("Accepting Report #%d\nWhat action should be taken?", gI_ActiveReport[client]);
+    menu.AddItem("Delete", "Delete the record.");
+    menu.AddItem("Ban", "Delete and ban the player.");
+    menu.AddItem("Wipe", "Delete, ban, and wipe the player's records.");
+    menu.Display(client, 120);
+}
+
+void OpenReportRejectMenu(int client) {
+    Menu menu = new Menu(MenuHandler_ReportAction);
+    menu.SetTitle("Rejecting Report #%d\nWhat action should be taken?", gI_ActiveReport[client]);
+    menu.AddItem("Reject", "Reject the report.");
+    menu.AddItem("Blacklist", "Reject and blacklist the reporter.");
+    menu.AddItem("Blackban", "Reject and ban the reporter.");
+    menu.Display(client, 120);
 }
 
 void OpenReportTrackMenu(int client) {
@@ -389,6 +461,15 @@ public void UploadReport(report_t report) {
     FormatEx(sQuery, sizeof(sQuery), "INSERT INTO `%sreports` (`recordId`, `reporter`, `reason`) VALUES('%d', '%d', '%s');", gS_MySQLPrefix, report.recordId, report.reporter, report.reason);
     QueryLog(gH_SQL, SQL_Void, sQuery);
     gH_Reports.PushArray(report);
+}
+
+public void DeleteReport(int reportIndex) {
+    report_t report;
+    gH_Reports.GetArray(reportIndex, report);
+    char sQuery[512];
+    FormatEx(sQuery, sizeof(sQuery), "DELETE FROM `%sreports` WHERE `id` = '%d';", gS_MySQLPrefix, report.id);
+    QueryLog(gH_SQL, SQL_Void, sQuery);
+    gH_Reports.Erase(reportIndex);
 }
 
 public void SQL_Void(Database db, DBResultSet results, const char[] error, DataPack hPack) {
