@@ -37,6 +37,36 @@
   {
     "en" "Please type the reason for your report"
   }
+  "ReportHandleAccept"
+  {
+    "#format" "{1:s},{2:d},{3:s},{4:s},{5:s},{6:s}"
+    "en" "Accepted report {1}#{2}{3} and deleted {4}{5}'s{6} record."
+  }
+  "ReportHandleBan"
+  {
+    "#format" "{1:s},{2:d},{3:s},{4:s},{5:s},{6:s}"
+    "en" "Accepted report {1}#{2}{3} and banned {4}{5}{6}."
+  }
+  "ReportHandleWipe"
+  {
+    "#format" "{1:s},{2:d},{3:s},{4:s},{5:s},{6:s}"
+    "en" "Accepted report {1}#{2}{3} and wiping {4}{5}'s{6} data."
+  }
+  "ReportHandleReject"
+  {
+    "#format" "{1:s},{2:d},{3:s}"
+    "en" "Rejected report {1}#{2}{3}."
+  }
+  "ReportHandleBlacklist"
+  {
+    "#format" "{1:s},{2:d},{3:s},{4:s},{5:s},{6:s}"
+    "en" "Rejected report {1}#{2}{3} and blacklisted {4}{5}{6} from making future reports."
+  }
+  "ReportHandleBlackban"
+  {
+    "#format" "{1:s},{2:d},{3:s},{4:s},{5:s},{6:s}"
+    "en" "Rejected report {1}#{2}{3} and banned {4}{5}{6}."
+  }
   "UnknownRecord"
   {
     "#format" "{1:s},{2:s}"
