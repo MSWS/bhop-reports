@@ -85,7 +85,7 @@ public void OnPluginStart() {
 
     char sQuery[512];
     FormatEx(sQuery, sizeof(sQuery),
-      "CREATE TABLE IF NOT EXISTS `%sreports` (`id` INT AUTO_INCREMENT NOT NULL, `recordId` INT NOT NULL, `reporter` INT NOT NULL, `reason` VARCHAR(128) NOT NULL, PRIMARY KEY (`id`), FOREIGN KEY (`recordId`) REFERENCES %splayertimes(`id`) ON DELETE CASCADE);",
+      "CREATE TABLE IF NOT EXISTS `%sreports` (`id` INT AUTO_INCREMENT NOT NULL, `recordId` INT NOT NULL, `reporter` INT NOT NULL, `reason` VARCHAR(128) NOT NULL, `date` DATE NOT NULL DEFAULT CURRENT_DATE(), PRIMARY KEY (`id`), FOREIGN KEY (`recordId`) REFERENCES %splayertimes(`id`) ON DELETE CASCADE);",
       gS_MySQLPrefix, gS_MySQLPrefix);
     QueryLog(gH_SQL, SQL_Void, sQuery);
 }
@@ -113,7 +113,7 @@ public void LoadReports() {
 }
 
 public Action Command_Reports(int client, int args) {
-    if(gH_Reports.Length == 0) {
+    if (gH_Reports.Length == 0) {
         Shavit_PrintToChat(client, "%T", "NoReports", client, gS_ChatStrings.sWarning, gS_ChatStrings.sText);
         return Plugin_Handled;
     }
@@ -167,23 +167,36 @@ public Action OnClientSayCommand(int client, const char[] cmd, const char[] args
     return Plugin_Stop;
 }
 
-void OpenReportViewMenu(int client) {
-    Menu menu = new Menu(MenuHandler_ReportView);
-    menu.SetTitle("%T\n ", "ReportViewTitle", client);
-    for (int i = 0; i < gH_Reports.Length && i < 50; i++) {
-        report_t report;
-        gH_Reports.GetArray(i, report);
-        char line[64];
-        char trackName[32];
-        GetTrackName(client, report.track, trackName, sizeof(trackName));
-        char sTime[32];
-        float time = Shavit_GetWorldRecord(report.style, report.track);
-        FormatSeconds(time, sTime, sizeof(sTime), false);
-        Format(line, sizeof(line), "%s > %s's %s %s (%s)", report.reporterName, report.targetName, gS_StyleStrings[report.style], trackName, sTime);
-        char ind[3];
-        IntToString(i, ind, sizeof(ind));
-        menu.AddItem(ind, line);
+void OpenReportViewMenu(int client, int reportIndex = -1) {
+    if (reportIndex == -1) {
+        Menu menu = new Menu(MenuHandler_ReportView);
+        menu.SetTitle("%T\n ", "ReportViewTitle", client);
+        for (int i = 0; i < gH_Reports.Length && i < 50; i++) {
+            report_t report;
+            gH_Reports.GetArray(i, report);
+            char line[64];
+            char trackName[32];
+            GetTrackName(client, report.track, trackName, sizeof(trackName));
+            char sTime[32];
+            float time = Shavit_GetWorldRecord(report.style, report.track);
+            FormatSeconds(time, sTime, sizeof(sTime), false);
+            Format(line, sizeof(line), "%s > %s's %s %s (%s)", report.reporterName, report.targetName, gS_StyleStrings[report.style], trackName, sTime);
+            char ind[3];
+            IntToString(i, ind, sizeof(ind));
+            menu.AddItem(ind, line);
+        }
+        menu.Display(client, MENU_TIME_FOREVER);
+        return;
     }
+    report_t report;
+    gH_Reports.GetArray(reportIndex, report);
+    Menu menu = new Menu(MenuHandler_ReportAction);
+    char trackName[32], sTime[32];
+    GetTrackName(client, report.track, trackName, sizeof(trackName));
+    FormatSeconds(Shavit_GetWorldRecord(report.style, report.track), sTime, sizeof(sTime), true);
+    menu.SetTitle("%T\n ", "ReportViewTitle", client, report.id, report.reporterName, report.targetName, trackName, gS_StyleStrings[report.style], sTime, report.reason);
+    menu.AddItem("View", "Who gives a");
+    menu.AddItem("Delete", "Shit");
     menu.Display(client, MENU_TIME_FOREVER);
 }
 
@@ -192,6 +205,16 @@ int MenuHandler_ReportView(Menu menu, MenuAction action, int param1, int param2)
         delete menu;
         return 0;
     }
+    FakeClientCommand(param1, "sm_reports %d", param2);
+    return 0;
+}
+
+int MenuHandler_ReportAction(Menu menu, MenuAction action, int param1, int param2) {
+    if (action == MenuAction_End || action == MenuAction_Cancel) {
+        delete menu;
+        return 0;
+    }
+    PrintToChat(param1, "Amen!");
     return 0;
 }
 
@@ -344,15 +367,17 @@ public void SQL_LoadedReports(Database db, DBResultSet results, const char[] err
 
     gH_Reports.Clear();
     while (results.FetchRow()) {
+        // id recordId reporter reason `date` Recorder Reporter track `style`
         report_t report;
         report.id       = results.FetchInt(0);
         report.recordId = results.FetchInt(1);
         report.reporter = results.FetchInt(2);
         results.FetchString(3, report.reason, sizeof(report.reason));
-        results.FetchString(4, report.targetName, sizeof(report.reporterName));
-        results.FetchString(5, report.reporterName, sizeof(report.reporterName));
-        report.track = results.FetchInt(6);
-        report.style = results.FetchInt(7);
+        report.date = results.FetchInt(4);
+        results.FetchString(5, report.targetName, sizeof(report.reporterName));
+        results.FetchString(6, report.reporterName, sizeof(report.reporterName));
+        report.track = results.FetchInt(7);
+        report.style = results.FetchInt(8);
         gH_Reports.PushArray(report);
     }
     LogMessage("Loaded %d reports", gH_Reports.Length);

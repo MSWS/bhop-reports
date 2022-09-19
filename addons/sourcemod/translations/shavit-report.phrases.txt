@@ -4,6 +4,11 @@
   {
     "en" "Reports"
   }
+  "ReportInfoTitle"
+  {
+    "#format" "{1:d},{2:s},{3:s},{4:s},{5:s},{6:s}"
+    "en" "Report #{1}\n{2} reported {3}'s\n{4} {5} ran in {6}\nReason: {7}"
+  }
   "ReportTrackTitle"
   {
     "en" "Select a track to report"
@@ -22,7 +27,7 @@
   }
   "UnknownRecord"
   {
-    "#format" "{1,s},{2,s}"
+    "#format" "{1:s},{2:s}"
     "en" "{1}ERROR{2}: Unable to find a record."
   }
   "ReportSubmitted"
@@ -31,12 +36,12 @@
   }
   "NoReports"
   {
-    "#format" "{1,s},{2,s}"
+    "#format" "{1:s},{2:s}"
     "en" "{1}ERROR{2}: No reports found."
   }
   "NoRecords"
   {
-    "#format" "{1,s},{2,s}"
+    "#format" "{1:s},{2:s}"
     "en" "{1}ERROR{2}: No records found."
   }
 }
