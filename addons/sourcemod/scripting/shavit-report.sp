@@ -174,7 +174,7 @@ public Action Command_Report(int client, int args) {
     report.reporter = GetSteamAccountID(client);
     strcopy(report.reason, sizeof(report.reason), sArgs[2]);
     UploadReport(report);
-    UpdateReport(report);
+    UpdateReport(report, client);
     Shavit_PrintToChat(client, "%T", "ReportSubmitted", client);
     return Plugin_Handled;
 }
@@ -227,10 +227,12 @@ void OpenReportViewMenu(int client, int reportIndex = -1) {
 }
 
 int MenuHandler_ReportView(Menu menu, MenuAction action, int param1, int param2) {
-    if (action == MenuAction_End || action == MenuAction_Cancel) {
+    if (action == MenuAction_End) {
         delete menu;
         return 0;
     }
+    if (action != MenuAction_Select)
+        return 0;
     FakeClientCommand(param1, "sm_reports %d", param2);
     return 0;
 }
@@ -240,8 +242,10 @@ int MenuHandler_ReportAction(Menu menu, MenuAction action, int param1, int param
         if (action == MenuAction_Cancel && param2 == MenuCancel_Exit) {
             FakeClientCommand(param1, "sm_reports");
         }
-        gI_ActiveReport[param1] = -1;
-        delete menu;
+        if (param1 >= 0 && param1 < sizeof(gI_ActiveReport))
+            gI_ActiveReport[param1] = -1;
+        if (action == MenuAction_End)
+            delete menu;
         return 0;
     }
     if (gI_ActiveReport[param1] == -1) {
@@ -448,16 +452,20 @@ public int MenuHandler_ReplayStyle(Menu menu, MenuAction action, int param1, int
     return 0;
 }
 
-public void SQL_LoadedReports(Database db, DBResultSet results, const char[] error, DataPack hPack) {
+void SQL_LoadedReports(Database db, DBResultSet results, const char[] error, int reporter = -1) {
     if (results == null) {
         LogError("Timer error! Failed to load report data. Reason: %s", error);
         return;
     }
 
     while (results.FetchRow()) {
-        LoadReport(results);
+        int id = LoadReport(results);
+        if (reporter != -1)
+            Shavit_PrintToChat(reporter, "%T", "ReportSubmittedID", reporter, gS_ChatStrings.sVariable, id, gS_ChatStrings.sText);
     }
-    LogMessage("Loaded %d reports", gH_Reports.Length);
+
+    if (reporter == -1)
+        LogMessage("Loaded %d reports", gH_Reports.Length);
 }
 
 public void UploadReport(report_t report) {
@@ -467,7 +475,7 @@ public void UploadReport(report_t report) {
     QueryLog(gH_SQL, SQL_Void, sQuery);
 }
 
-public void LoadReport(DBResultSet results) {
+public int LoadReport(DBResultSet results) {
     // id recordId reporter reason `date` handler resolution handledDate Recorder Reporter track `style`
     report_t report;
     report.id       = results.FetchInt(0);
@@ -483,12 +491,13 @@ public void LoadReport(DBResultSet results) {
     report.track = results.FetchInt(10);
     report.style = results.FetchInt(11);
     gH_Reports.PushArray(report);
+    return report.id;
 }
 
-public void UpdateReport(report_t report) {
+void UpdateReport(report_t report, int client = -1) {
     char sQuery[512];
     FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style` FROM `playertimes` AS times INNER JOIN `%sreports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) WHERE `reason` = '%s' AND `reporter` = '%d' ORDER BY `date` DESC LIMIT 1;", gS_MySQLPrefix, report.reason, report.reporter);
-    QueryLog(gH_SQL, SQL_LoadedReports, sQuery);
+    QueryLog(gH_SQL, SQL_LoadedReports, sQuery, client);
 }
 
 public void DeleteReport(int reportIndex) {

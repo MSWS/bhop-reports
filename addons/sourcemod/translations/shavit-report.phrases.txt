@@ -76,6 +76,11 @@
   {
     "en" "Your report has been submitted."
   }
+  "ReportSubmittedID"
+  {
+    "#format" "{1:s},{2:d},{3:s}"
+    "en" "Your report ID is {1}#{2}{3}."
+  }
   "NoReports"
   {
     "#format" "{1:s},{2:s}"
