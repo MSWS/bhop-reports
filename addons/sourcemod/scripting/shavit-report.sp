@@ -114,8 +114,9 @@ public void Shavit_OnChatConfigLoaded() {
 
 public void LoadReports() {
     LogMessage("Loading reports...");
+    gH_Reports.Clear();
     char sQuery[512];
-    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style` FROM `playertimes` AS times INNER JOIN `%sreports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) WHERE `map` = '%s';", gS_MySQLPrefix, gS_MapName);
+    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style` FROM `playertimes` AS times INNER JOIN `%sreports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) WHERE `handler` IS NULL AND `map` = '%s';", gS_MySQLPrefix, gS_MapName);
     QueryLog(gH_SQL, SQL_LoadedReports, sQuery);
 }
 
@@ -173,6 +174,7 @@ public Action Command_Report(int client, int args) {
     report.reporter = GetSteamAccountID(client);
     strcopy(report.reason, sizeof(report.reason), sArgs[2]);
     UploadReport(report);
+    UpdateReport(report);
     Shavit_PrintToChat(client, "%T", "ReportSubmitted", client);
     return Plugin_Handled;
 }
@@ -452,7 +454,6 @@ public void SQL_LoadedReports(Database db, DBResultSet results, const char[] err
         return;
     }
 
-    gH_Reports.Clear();
     while (results.FetchRow()) {
         LoadReport(results);
     }
@@ -464,7 +465,6 @@ public void UploadReport(report_t report) {
     gH_SQL.Escape(report.reason, report.reason, sizeof(report.reason));
     FormatEx(sQuery, sizeof(sQuery), "INSERT INTO `%sreports` (`recordId`, `reporter`, `reason`) VALUES('%d', '%d', '%s');", gS_MySQLPrefix, report.recordId, report.reporter, report.reason);
     QueryLog(gH_SQL, SQL_Void, sQuery);
-    gH_Reports.PushArray(report);
 }
 
 public void LoadReport(DBResultSet results) {
@@ -487,7 +487,8 @@ public void LoadReport(DBResultSet results) {
 
 public void UpdateReport(report_t report) {
     char sQuery[512];
-    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style` FROM `playertimes` AS times INNER JOIN `%sreports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) WHERE `reason` = '%s' AND `reporter` = '%d' ORDER BY `date` ASC LIMIT 1;", gS_MySQLPrefix, report.reason, report.reporter);
+    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style` FROM `playertimes` AS times INNER JOIN `%sreports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) WHERE `reason` = '%s' AND `reporter` = '%d' ORDER BY `date` DESC LIMIT 1;", gS_MySQLPrefix, report.reason, report.reporter);
+    QueryLog(gH_SQL, SQL_LoadedReports, sQuery);
 }
 
 public void DeleteReport(int reportIndex) {
