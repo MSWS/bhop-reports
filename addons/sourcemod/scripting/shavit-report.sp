@@ -92,13 +92,8 @@ public void OnPluginStart() {
 void CreateSQL() {
     char sQuery[512];
     FormatEx(sQuery, sizeof(sQuery),
-      "CREATE TABLE IF NOT EXISTS `%sreports` (`id` INT AUTO_INCREMENT NOT NULL, `recordId` INT NOT NULL, `reporter` INT NOT NULL, `reason` VARCHAR(128) NOT NULL, `date` TIMESTAMP NOT NULL DEFAULT NOW(), PRIMARY KEY (`id`), FOREIGN KEY (`recordId`) REFERENCES %splayertimes(`id`) ON DELETE CASCADE);",
-      gS_MySQLPrefix, gS_MySQLPrefix);
-    QueryLog(gH_SQL, SQL_Void, sQuery);
-
-    FormatEx(sQuery, sizeof(sQuery),
-      "CREATE TABLE IF NOT EXISTS %sreportstats (`auth` INT NOT NULL, `accepted` INT DEFAULT 0 NOT NULL, `rejected` INT DEFAULT 0 NOT NULL, `banned` BOOL DEFAULT FALSE NULL, `valid` INT DEFAULT 0 NOT NULL, `invalid` INT DEFAULT 0 NOT NULL, `ReportsBanned` INT DEFAULT 0 NOT NULL, `ReportsWiped` INT DEFAULT 0 NOT NULL, `ReportsBlacklist` INT DEFAULT 0 NOT NULL, `ReportsBlackban` INT DEFAULT 0 NOT NULL, CONSTRAINT reportstats_FK FOREIGN KEY (auth) REFERENCES %susers(auth) ON DELETE CASCADE)",
-      gS_MySQLPrefix, gS_MySQLPrefix);
+      "CREATE TABLE IF NOT EXISTS `%sreports` (`id` INT AUTO_INCREMENT NOT NULL, `recordId` INT NOT NULL, `reporter` INT NOT NULL, `reason` VARCHAR(128) NOT NULL, `date` TIMESTAMP NOT NULL DEFAULT NOW(), `handler` INT, `resolution` INT, `handledDate` TIMESTAMP, PRIMARY KEY (`id`), FOREIGN KEY (`reporter`) REFERENCES %susers(`auth`), FOREIGN KEY (`recordId`) REFERENCES %splayertimes(`id`) ON DELETE CASCADE, FOREIGN KEY (`handler`) REFERENCES %susers(`auth`));",
+      gS_MySQLPrefix, gS_MySQLPrefix, gS_MySQLPrefix, gS_MySQLPrefix);
     QueryLog(gH_SQL, SQL_Void, sQuery);
 }
 
@@ -120,7 +115,7 @@ public void Shavit_OnChatConfigLoaded() {
 public void LoadReports() {
     LogMessage("Loading reports...");
     char sQuery[512];
-    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style` FROM `playertimes` AS times INNER JOIN `reports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) WHERE `map` = '%s';", gS_MapName);
+    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style` FROM `playertimes` AS times INNER JOIN `%sreports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) WHERE `map` = '%s';", gS_MySQLPrefix, gS_MapName);
     QueryLog(gH_SQL, SQL_LoadedReports, sQuery);
 }
 
@@ -174,7 +169,7 @@ public Action Command_Report(int client, int args) {
         return Plugin_Handled;
     }
 
-    report.date = GetTime();
+    report.date     = GetTime();
     report.reporter = GetSteamAccountID(client);
     strcopy(report.reason, sizeof(report.reason), sArgs[2]);
     UploadReport(report);
@@ -473,23 +468,26 @@ public void UploadReport(report_t report) {
 }
 
 public void LoadReport(DBResultSet results) {
-    // id recordId reporter reason `date` Recorder Reporter track `style`
+    // id recordId reporter reason `date` handler resolution handledDate Recorder Reporter track `style`
     report_t report;
     report.id       = results.FetchInt(0);
     report.recordId = results.FetchInt(1);
     report.reporter = results.FetchInt(2);
     results.FetchString(3, report.reason, sizeof(report.reason));
-    report.date = results.FetchInt(4);
-    results.FetchString(5, report.targetName, sizeof(report.reporterName));
-    results.FetchString(6, report.reporterName, sizeof(report.reporterName));
-    report.track = results.FetchInt(7);
-    report.style = results.FetchInt(8);
+    report.date        = results.FetchInt(4);
+    report.handler     = results.FetchInt(5);
+    report.resolution  = results.FetchInt(6);
+    report.handledDate = results.FetchInt(7);
+    results.FetchString(8, report.targetName, sizeof(report.reporterName));
+    results.FetchString(9, report.reporterName, sizeof(report.reporterName));
+    report.track = results.FetchInt(10);
+    report.style = results.FetchInt(11);
     gH_Reports.PushArray(report);
 }
 
 public void UpdateReport(report_t report) {
     char sQuery[512];
-    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style` FROM `playertimes` AS times INNER JOIN `reports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) WHERE `reason` = '%s' AND `auth` = '%d' AND ;", report.reason, report.reporter);
+    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style` FROM `playertimes` AS times INNER JOIN `%sreports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) WHERE `reason` = '%s' AND `reporter` = '%d' ORDER BY `date` ASC LIMIT 1;", gS_MySQLPrefix, report.reason, report.reporter);
 }
 
 public void DeleteReport(int reportIndex) {

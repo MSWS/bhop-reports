@@ -10,4 +10,7 @@ enum struct report_t
   char targetName[MAX_NAME_LENGTH];
   char reason[128];
   int date;
+  int handler;
+  int resolution;
+  int handledDate;
 }
