@@ -15,11 +15,11 @@
   }
   "ReportMenuAccept"
   {
-    "en" "Accept Report\nMarks the report as valid"
+    "en" "Accept Report"
   }
   "ReportMenuReject"
   {
-    "en" "Reject Report\nMarks the report as invalid"
+    "en" "Reject Report"
   }
   "ReportTrackTitle"
   {

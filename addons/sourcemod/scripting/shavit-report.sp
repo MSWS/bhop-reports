@@ -29,24 +29,24 @@
 #pragma newdecls required
 #pragma semicolon 1
 
+//
+//// Globals
+//
+
 Database gH_SQL = null;
 
-// table prefix
-char gS_MySQLPrefix[32];
-
-// cache
 ArrayList gH_Reports;
+stylestrings_t gS_StyleStrings[STYLE_LIMIT];
+chatstrings_t gS_ChatStrings;
+char gS_MySQLPrefix[32];
 char gS_MapName[PLATFORM_MAX_PATH];
 int gI_ActiveReport[MAXPLAYERS + 1];
 int gI_MenuTrack[MAXPLAYERS + 1];
 int gI_MenuStyle[MAXPLAYERS + 1];
 int gI_Styles;
-stylestrings_t gS_StyleStrings[STYLE_LIMIT];
-chatstrings_t gS_ChatStrings;
-bool gB_Late = false;
 bool gB_Chat[MAXPLAYERS + 1];
+bool gB_Late = false;
 
-// reasons
 char gS_Reasons[5][64] = {
     "Improper Zones (Start)",
     "Improper Zones (End)",
@@ -55,6 +55,9 @@ char gS_Reasons[5][64] = {
     "Other",
 };
 
+//
+//// Plugin Setup
+//
 public Plugin myinfo =
 {
     name        = "[shavit] Reporting System",
@@ -89,19 +92,25 @@ public void OnPluginStart() {
     CreateSQL();
 }
 
-void CreateSQL() {
-    char sQuery[512];
-    FormatEx(sQuery, sizeof(sQuery),
-      "CREATE TABLE IF NOT EXISTS `%sreports` (`id` INT AUTO_INCREMENT NOT NULL, `recordId` INT NOT NULL, `reporter` INT NOT NULL, `reason` VARCHAR(128) NOT NULL, `date` TIMESTAMP NOT NULL DEFAULT NOW(), `handler` INT, `resolution` INT, `handledDate` TIMESTAMP, PRIMARY KEY (`id`), FOREIGN KEY (`reporter`) REFERENCES %susers(`auth`), FOREIGN KEY (`recordId`) REFERENCES %splayertimes(`id`) ON DELETE CASCADE, FOREIGN KEY (`handler`) REFERENCES %susers(`auth`));",
-      gS_MySQLPrefix, gS_MySQLPrefix, gS_MySQLPrefix, gS_MySQLPrefix);
-    QueryLog(gH_SQL, SQL_Void, sQuery);
-}
-
+//
+// Plugin Initialization
+//
 public void OnMapStart() {
     GetCurrentMap(gS_MapName, sizeof(gS_MapName));
     LoadReports();
 }
 
+public Action OnClientSayCommand(int client, const char[] cmd, const char[] args) {
+    if (!gB_Chat[client])
+        return Plugin_Continue;
+    gB_Chat[client] = false;
+    FakeClientCommand(client, "sm_report %d %d %s", gI_MenuTrack[client], gI_MenuStyle[client], args);
+    return Plugin_Stop;
+}
+
+//
+//// Shavit Hooks
+//
 public void Shavit_OnStyleConfigLoaded(int styles) {
     for (int i = 0; i < styles; i++)
         Shavit_GetStyleStringsStruct(i, gS_StyleStrings[i]);
@@ -112,7 +121,19 @@ public void Shavit_OnChatConfigLoaded() {
     Shavit_GetChatStringsStruct(gS_ChatStrings);
 }
 
-public void LoadReports() {
+//
+//// SQL Functions
+//
+
+void CreateSQL() {
+    char sQuery[512];
+    FormatEx(sQuery, sizeof(sQuery),
+      "CREATE TABLE IF NOT EXISTS `%sreports` (`id` INT AUTO_INCREMENT NOT NULL, `recordId` INT NOT NULL, `reporter` INT NOT NULL, `reason` VARCHAR(128) NOT NULL, `date` TIMESTAMP NOT NULL DEFAULT NOW(), `handler` INT, `resolution` INT, `handledDate` TIMESTAMP, PRIMARY KEY (`id`), FOREIGN KEY (`reporter`) REFERENCES %susers(`auth`), FOREIGN KEY (`recordId`) REFERENCES %splayertimes(`id`) ON DELETE CASCADE, FOREIGN KEY (`handler`) REFERENCES %susers(`auth`));",
+      gS_MySQLPrefix, gS_MySQLPrefix, gS_MySQLPrefix, gS_MySQLPrefix);
+    QueryLog(gH_SQL, SQL_Void, sQuery);
+}
+
+void LoadReports() {
     LogMessage("Loading reports...");
     gH_Reports.Clear();
     char sQuery[512];
@@ -120,6 +141,54 @@ public void LoadReports() {
     QueryLog(gH_SQL, SQL_LoadedReports, sQuery);
 }
 
+void SQL_LoadedReports(Database db, DBResultSet results, const char[] error, int reporter = -1) {
+    if (results == null) {
+        LogError("Timer error! Failed to load report data. Reason: %s", error);
+        return;
+    }
+
+    while (results.FetchRow()) {
+        int id = LoadReport(results);
+        if (reporter != -1)
+            Shavit_PrintToChat(reporter, "%T", "ReportSubmittedID", reporter, gS_ChatStrings.sVariable, id, gS_ChatStrings.sText);
+    }
+
+    if (reporter == -1)
+        LogMessage("Loaded %d reports", gH_Reports.Length);
+}
+
+void UploadReport(report_t report) {
+    char sQuery[512];
+    gH_SQL.Escape(report.reason, report.reason, sizeof(report.reason));
+    FormatEx(sQuery, sizeof(sQuery), "INSERT INTO `%sreports` (`recordId`, `reporter`, `reason`) VALUES('%d', '%d', '%s');", gS_MySQLPrefix, report.recordId, report.reporter, report.reason);
+    QueryLog(gH_SQL, SQL_Void, sQuery);
+}
+
+void UpdateReport(report_t report, int client = -1) {
+    char sQuery[512];
+    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style` FROM `playertimes` AS times INNER JOIN `%sreports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) WHERE `reason` = '%s' AND `reporter` = '%d' ORDER BY `date` DESC LIMIT 1;", gS_MySQLPrefix, report.reason, report.reporter);
+    QueryLog(gH_SQL, SQL_LoadedReports, sQuery, client);
+}
+
+void DeleteReport(int reportIndex) {
+    report_t report;
+    gH_Reports.GetArray(reportIndex, report);
+    char sQuery[512];
+    FormatEx(sQuery, sizeof(sQuery), "DELETE FROM `%sreports` WHERE `id` = '%d';", gS_MySQLPrefix, report.id);
+    QueryLog(gH_SQL, SQL_Void, sQuery);
+    gH_Reports.Erase(reportIndex);
+}
+
+void SQL_Void(Database db, DBResultSet results, const char[] error, DataPack hPack) {
+    if (results == null) {
+        LogError("SQL error! Reason: %s", error);
+        return;
+    }
+}
+
+//
+//// Commands
+//
 public Action Command_Reports(int client, int args) {
     if (gH_Reports.Length == 0) {
         Shavit_PrintToChat(client, "%T", "NoReports", client, gS_ChatStrings.sWarning, gS_ChatStrings.sText);
@@ -174,18 +243,14 @@ public Action Command_Report(int client, int args) {
     report.reporter = GetSteamAccountID(client);
     strcopy(report.reason, sizeof(report.reason), sArgs[2]);
     UploadReport(report);
-    UpdateReport(report, client);
+    UpdateReport(report, client); // Refetch report data to grab ID
     Shavit_PrintToChat(client, "%T", "ReportSubmitted", client);
     return Plugin_Handled;
 }
 
-public Action OnClientSayCommand(int client, const char[] cmd, const char[] args) {
-    if (!gB_Chat[client])
-        return Plugin_Continue;
-    gB_Chat[client] = false;
-    FakeClientCommand(client, "sm_report %d %d %s", gI_MenuTrack[client], gI_MenuStyle[client], args);
-    return Plugin_Stop;
-}
+//
+//// Menu
+//
 
 void OpenReportViewMenu(int client, int reportIndex = -1) {
     if (reportIndex == -1) {
@@ -225,6 +290,117 @@ void OpenReportViewMenu(int client, int reportIndex = -1) {
     menu.AddItem("Reject", line);
     menu.Display(client, MENU_TIME_FOREVER);
 }
+
+void OpenReportAcceptMenu(int client) {
+    Menu menu = new Menu(MenuHandler_ReportAction);
+    menu.SetTitle("Accepting Report #%d\nWhat action should be taken?", gI_ActiveReport[client]);
+    menu.AddItem("Delete", "Delete the record.");
+    menu.AddItem("Ban", "Delete and ban the player.");
+    menu.AddItem("Wipe", "Delete, ban, and wipe the player's records.");
+    menu.Display(client, 120);
+}
+
+void OpenReportRejectMenu(int client) {
+    Menu menu = new Menu(MenuHandler_ReportAction);
+    menu.SetTitle("Rejecting Report #%d\nWhat action should be taken?", gI_ActiveReport[client]);
+    menu.AddItem("RejectReport", "Reject the report.");
+    menu.AddItem("Blacklist", "Reject and blacklist the reporter.");
+    menu.AddItem("Blackban", "Reject and ban the reporter.");
+    menu.Display(client, 120);
+}
+
+void OpenReportTrackMenu(int client) {
+    Menu menu = new Menu(MenuHandler_ReportTrack);
+    menu.SetTitle("%T\n ", "ReportTrackTitle", client);
+    int validTrack = -1;
+    for (int i = 0; i < TRACKS_SIZE; i++) {
+        bool records = false;
+
+        for (int j = 0; j < gI_Styles; j++) {
+            if (Shavit_GetWorldRecord(j, i) > 0.0) {
+                records = true;
+                break;
+            }
+        }
+        if (!records)
+            continue;
+        validTrack = i;
+        char sInfo[8];
+        IntToString(i, sInfo, 8);
+        char sTrack[32];
+        GetTrackName(client, i, sTrack, 32);
+        menu.AddItem(sInfo, sTrack, ITEMDRAW_DEFAULT);
+    }
+
+    if (menu.ItemCount == 0) {
+        delete menu;
+        Shavit_PrintToChat(client, "%T", "NoRecords", client, gS_ChatStrings.sWarning, gS_ChatStrings.sText);
+        return;
+    } else if (menu.ItemCount == 1) {
+        delete menu;
+        gI_MenuTrack[client] = validTrack;
+        OpenReportStyleMenu(client, validTrack);
+        return;
+    }
+    menu.ExitBackButton = true;
+    menu.Display(client, MENU_TIME_FOREVER);
+}
+
+void OpenReportStyleMenu(int client, int track) {
+    char sTrack[32];
+    GetTrackName(client, track, sTrack, 32);
+
+    Menu menu = new Menu(MenuHandler_ReplayStyle);
+    menu.SetTitle("%T (%s)\n ", "ReportStyleTitle", client, sTrack);
+
+    int[] styles = new int[gI_Styles];
+    Shavit_GetOrderedStyles(styles, gI_Styles);
+
+    int valid = -1;
+    for (int i = 0; i < gI_Styles; i++) {
+        int iStyle = styles[i];
+
+        char sInfo[8];
+        IntToString(iStyle, sInfo, 8);
+
+        float time = Shavit_GetWorldRecord(iStyle, track);
+        if (time <= 0)
+            continue;
+        valid = iStyle;
+        char sDisplay[64];
+        char sTime[32];
+        FormatSeconds(time, sTime, 32, false);
+
+        FormatEx(sDisplay, 64, "%s - %s", gS_StyleStrings[iStyle].sStyleName, sTime);
+
+        menu.AddItem(sInfo, sDisplay, ITEMDRAW_DEFAULT);
+    }
+
+    if (menu.ItemCount == 0) {
+        menu.AddItem("-1", "ERROR");
+    } else if (menu.ItemCount == 1) {
+        gI_MenuStyle[client] = valid;
+        FakeClientCommand(client, "sm_report %d %d", track, valid);
+        delete menu;
+    }
+
+    menu.Display(client, 60);
+}
+
+void OpenReportReasonMenu(int client) {
+    Menu menu = new Menu(MenuHandler_ReportReason);
+    menu.SetTitle("%T\n ", "ReportReasonTitle", client);
+    for (int i = 0; i < sizeof(gS_Reasons); i++) {
+        char sInfo[sizeof(gS_Reasons[])];
+        IntToString(i, sInfo, sizeof(sInfo));
+        menu.AddItem(sInfo, gS_Reasons[i], ITEMDRAW_DEFAULT);
+    }
+    menu.Display(client, 60);
+}
+
+//
+// Menu Handlers
+//
 
 int MenuHandler_ReportView(Menu menu, MenuAction action, int param1, int param2) {
     if (action == MenuAction_End) {
@@ -293,62 +469,7 @@ int MenuHandler_ReportAction(Menu menu, MenuAction action, int param1, int param
     return 0;
 }
 
-void OpenReportAcceptMenu(int client) {
-    Menu menu = new Menu(MenuHandler_ReportAction);
-    menu.SetTitle("Accepting Report #%d\nWhat action should be taken?", gI_ActiveReport[client]);
-    menu.AddItem("Delete", "Delete the record.");
-    menu.AddItem("Ban", "Delete and ban the player.");
-    menu.AddItem("Wipe", "Delete, ban, and wipe the player's records.");
-    menu.Display(client, 120);
-}
-
-void OpenReportRejectMenu(int client) {
-    Menu menu = new Menu(MenuHandler_ReportAction);
-    menu.SetTitle("Rejecting Report #%d\nWhat action should be taken?", gI_ActiveReport[client]);
-    menu.AddItem("RejectReport", "Reject the report.");
-    menu.AddItem("Blacklist", "Reject and blacklist the reporter.");
-    menu.AddItem("Blackban", "Reject and ban the reporter.");
-    menu.Display(client, 120);
-}
-
-void OpenReportTrackMenu(int client) {
-    Menu menu = new Menu(MenuHandler_ReportTrack);
-    menu.SetTitle("%T\n ", "ReportTrackTitle", client);
-    int validTrack = -1;
-    for (int i = 0; i < TRACKS_SIZE; i++) {
-        bool records = false;
-
-        for (int j = 0; j < gI_Styles; j++) {
-            if (Shavit_GetWorldRecord(j, i) > 0.0) {
-                records = true;
-                break;
-            }
-        }
-        if (!records)
-            continue;
-        validTrack = i;
-        char sInfo[8];
-        IntToString(i, sInfo, 8);
-        char sTrack[32];
-        GetTrackName(client, i, sTrack, 32);
-        menu.AddItem(sInfo, sTrack, ITEMDRAW_DEFAULT);
-    }
-
-    if (menu.ItemCount == 0) {
-        delete menu;
-        Shavit_PrintToChat(client, "%T", "NoRecords", client, gS_ChatStrings.sWarning, gS_ChatStrings.sText);
-        return;
-    } else if (menu.ItemCount == 1) {
-        delete menu;
-        gI_MenuTrack[client] = validTrack;
-        OpenReportStyleMenu(client, validTrack);
-        return;
-    }
-    menu.ExitBackButton = true;
-    menu.Display(client, MENU_TIME_FOREVER);
-}
-
-public int MenuHandler_ReportTrack(Menu menu, MenuAction action, int param1, int param2) {
+int MenuHandler_ReportTrack(Menu menu, MenuAction action, int param1, int param2) {
     if (action == MenuAction_End || action == MenuAction_Cancel) {
         delete menu;
         return 0;
@@ -363,58 +484,6 @@ public int MenuHandler_ReportTrack(Menu menu, MenuAction action, int param1, int
         FakeClientCommand(param1, "sm_report %d", track);
     }
     return 0;
-}
-
-void OpenReportStyleMenu(int client, int track) {
-    char sTrack[32];
-    GetTrackName(client, track, sTrack, 32);
-
-    Menu menu = new Menu(MenuHandler_ReplayStyle);
-    menu.SetTitle("%T (%s)\n ", "ReportStyleTitle", client, sTrack);
-
-    int[] styles = new int[gI_Styles];
-    Shavit_GetOrderedStyles(styles, gI_Styles);
-
-    int valid = -1;
-    for (int i = 0; i < gI_Styles; i++) {
-        int iStyle = styles[i];
-
-        char sInfo[8];
-        IntToString(iStyle, sInfo, 8);
-
-        float time = Shavit_GetWorldRecord(iStyle, track);
-        if (time <= 0)
-            continue;
-        valid = iStyle;
-        char sDisplay[64];
-        char sTime[32];
-        FormatSeconds(time, sTime, 32, false);
-
-        FormatEx(sDisplay, 64, "%s - %s", gS_StyleStrings[iStyle].sStyleName, sTime);
-
-        menu.AddItem(sInfo, sDisplay, ITEMDRAW_DEFAULT);
-    }
-
-    if (menu.ItemCount == 0) {
-        menu.AddItem("-1", "ERROR");
-    } else if (menu.ItemCount == 1) {
-        gI_MenuStyle[client] = valid;
-        FakeClientCommand(client, "sm_report %d %d", track, valid);
-        delete menu;
-    }
-
-    menu.Display(client, 60);
-}
-
-void OpenReportReasonMenu(int client) {
-    Menu menu = new Menu(MenuHandler_ReportReason);
-    menu.SetTitle("%T\n ", "ReportReasonTitle", client);
-    for (int i = 0; i < sizeof(gS_Reasons); i++) {
-        char sInfo[sizeof(gS_Reasons[])];
-        IntToString(i, sInfo, sizeof(sInfo));
-        menu.AddItem(sInfo, gS_Reasons[i], ITEMDRAW_DEFAULT);
-    }
-    menu.Display(client, 60);
 }
 
 int MenuHandler_ReportReason(Menu menu, MenuAction action, int param1, int param2) {
@@ -432,7 +501,7 @@ int MenuHandler_ReportReason(Menu menu, MenuAction action, int param1, int param
     return 0;
 }
 
-public int MenuHandler_ReplayStyle(Menu menu, MenuAction action, int param1, int param2) {
+int MenuHandler_ReplayStyle(Menu menu, MenuAction action, int param1, int param2) {
     if (action != MenuAction_Select) {
         if (action == MenuAction_End || action == MenuAction_Cancel)
             delete menu;
@@ -452,30 +521,7 @@ public int MenuHandler_ReplayStyle(Menu menu, MenuAction action, int param1, int
     return 0;
 }
 
-void SQL_LoadedReports(Database db, DBResultSet results, const char[] error, int reporter = -1) {
-    if (results == null) {
-        LogError("Timer error! Failed to load report data. Reason: %s", error);
-        return;
-    }
-
-    while (results.FetchRow()) {
-        int id = LoadReport(results);
-        if (reporter != -1)
-            Shavit_PrintToChat(reporter, "%T", "ReportSubmittedID", reporter, gS_ChatStrings.sVariable, id, gS_ChatStrings.sText);
-    }
-
-    if (reporter == -1)
-        LogMessage("Loaded %d reports", gH_Reports.Length);
-}
-
-public void UploadReport(report_t report) {
-    char sQuery[512];
-    gH_SQL.Escape(report.reason, report.reason, sizeof(report.reason));
-    FormatEx(sQuery, sizeof(sQuery), "INSERT INTO `%sreports` (`recordId`, `reporter`, `reason`) VALUES('%d', '%d', '%s');", gS_MySQLPrefix, report.recordId, report.reporter, report.reason);
-    QueryLog(gH_SQL, SQL_Void, sQuery);
-}
-
-public int LoadReport(DBResultSet results) {
+int LoadReport(DBResultSet results) {
     // id recordId reporter reason `date` handler resolution handledDate Recorder Reporter track `style`
     report_t report;
     report.id       = results.FetchInt(0);
@@ -492,26 +538,4 @@ public int LoadReport(DBResultSet results) {
     report.style = results.FetchInt(11);
     gH_Reports.PushArray(report);
     return report.id;
-}
-
-void UpdateReport(report_t report, int client = -1) {
-    char sQuery[512];
-    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style` FROM `playertimes` AS times INNER JOIN `%sreports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) WHERE `reason` = '%s' AND `reporter` = '%d' ORDER BY `date` DESC LIMIT 1;", gS_MySQLPrefix, report.reason, report.reporter);
-    QueryLog(gH_SQL, SQL_LoadedReports, sQuery, client);
-}
-
-public void DeleteReport(int reportIndex) {
-    report_t report;
-    gH_Reports.GetArray(reportIndex, report);
-    char sQuery[512];
-    FormatEx(sQuery, sizeof(sQuery), "DELETE FROM `%sreports` WHERE `id` = '%d';", gS_MySQLPrefix, report.id);
-    QueryLog(gH_SQL, SQL_Void, sQuery);
-    gH_Reports.Erase(reportIndex);
-}
-
-public void SQL_Void(Database db, DBResultSet results, const char[] error, DataPack hPack) {
-    if (results == null) {
-        LogError("SQL error! Reason: %s", error);
-        return;
-    }
 }
