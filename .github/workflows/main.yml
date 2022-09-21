@@ -21,4 +21,4 @@ jobs:
     - name: Give spcomp the required permissions
       run: chmod +x addons/sourcemod/scripting/spcomp
     - name: Compiling the plugin
-      run: addons/sourcemod/scripting/spcomp -E shavit-report.sp
+      run: addons/sourcemod/scripting/spcomp -E addons/sourcemod/scripting/shavit-report.sp
