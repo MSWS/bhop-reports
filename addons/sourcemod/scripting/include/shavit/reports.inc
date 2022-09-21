@@ -1,5 +1,4 @@
-enum struct report_t
-{
+enum struct report_t {
   int id;
   int recordId;
   int reporter;
@@ -13,4 +12,8 @@ enum struct report_t
   int handler;
   int resolution;
   int handledDate;
+}
+
+enum Resolution {
+  DELETE, BAN, WIPE, REJECT, BLACKLIST, BLACKBAN
 }

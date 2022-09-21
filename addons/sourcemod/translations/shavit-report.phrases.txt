@@ -83,8 +83,8 @@
   }
   "NoReports"
   {
-    "#format" "{1:s},{2:s}"
-    "en" "{1}ERROR{2}: No reports found."
+    "#format" "{1:s}"
+    "en" "{1}There are no reports remaining, yay!"
   }
   "NoRecords"
   {
