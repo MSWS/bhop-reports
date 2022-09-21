@@ -67,7 +67,7 @@ public Plugin myinfo =
     author      = "MSWS",
     description = "Create and handle record reports",
     version     = SHAVIT_VERSION,
-    url         = "https://github.com/shavitush/bhoptimer"
+    url         = "https://github.com/MSWS/bhop-reports"
 };
 
 public APLRes AskPluginLoad2(Handle plugin, bool late, char[] error, int err) {
@@ -179,20 +179,9 @@ void UpdateReport(report_t report, int client = -1) {
     QueryLog(gH_SQL, SQL_LoadedReports, sQuery, client);
 }
 
-// void DeleteReport(int reportIndex) {
-//     report_t report;
-//     gH_Reports.GetArray(reportIndex, report);
-//     char sQuery[512];
-//     FormatEx(sQuery, sizeof(sQuery), "DELETE FROM `%sreports` WHERE `id` = '%d';", gS_SQLPrefix, report.id);
-//     QueryLog(gH_SQL, SQL_Void, sQuery);
-//     gH_Reports.Erase(reportIndex);
-// }
-
 void SQL_Void(Database db, DBResultSet results, const char[] error, DataPack hPack) {
-    if (results == null) {
+    if (results == null)
         LogError("SQL error! Reason: %s", error);
-        return;
-    }
 }
 
 void ResolveReport(int client, Resolution resolution) {
@@ -246,8 +235,8 @@ void ResolveReport(int client, Resolution resolution) {
     // id recordId reporter reason `date` handler resolution handledDate Recorder Reporter track `style`
 
     Format(sQuery, sizeof(sQuery),
-      "UPDATE `%sreports` SET `handler` = '%d', `resolution` = '%d', `handledDate` = NOW();",
-      gS_SQLPrefix, report.handler, view_as<int>(resolution));
+      "UPDATE `%sreports` SET `handler` = '%d', `resolution` = '%d', `handledDate` = NOW() WHERE `id` = '%d';",
+      gS_SQLPrefix, report.handler, view_as<int>(resolution), report.id);
     QueryLog(gH_SQL, SQL_Void, sQuery);
 }
 
@@ -273,16 +262,15 @@ public Action Command_Reports(int client, int args) {
     return Plugin_Handled;
 }
 
+// sm_report [track] [style] [reason]
 public Action Command_Report(int client, int args) {
-    // sm_report [track] [style] [reason]
     if (args == 0 && IsClientInGame(client)) {
         OpenReportTrackMenu(client);
         return Plugin_Handled;
     }
 
-    char command[200];
+    char command[256];
     GetCmdArgString(command, sizeof(command));
-
     char sArgs[3][128];
     ExplodeString(command, " ", sArgs, sizeof(sArgs), sizeof(sArgs[]), true);
 
@@ -477,9 +465,8 @@ int MenuHandler_ReportView(Menu menu, MenuAction action, int param1, int param2)
 
 int MenuHandler_ReportAction(Menu menu, MenuAction action, int param1, int param2) {
     if (action == MenuAction_End || action == MenuAction_Cancel) {
-        if (action == MenuAction_Cancel && param2 == MenuCancel_Exit) {
+        if (action == MenuAction_Cancel && param2 == MenuCancel_Exit)
             FakeClientCommand(param1, "sm_reports");
-        }
         if (param1 >= 0 && param1 < sizeof(gI_ActiveReport))
             gI_ActiveReport[param1] = -1;
         if (action == MenuAction_End)
@@ -546,7 +533,6 @@ int MenuHandler_ReportReason(Menu menu, MenuAction action, int param1, int param
         return 0;
     }
     if (param2 == sizeof(gS_Reasons) - 1) {
-        // Prompt for chat
         gB_Chat[param1] = true;
         Shavit_PrintToChat(param1, "%T", "PendingReason", param1);
         return 0;
@@ -557,7 +543,7 @@ int MenuHandler_ReportReason(Menu menu, MenuAction action, int param1, int param
 
 int MenuHandler_ReplayStyle(Menu menu, MenuAction action, int param1, int param2) {
     if (action != MenuAction_Select) {
-        if (action == MenuAction_End || action == MenuAction_Cancel)
+        if (action == MenuAction_End)
             delete menu;
         return 0;
     }
