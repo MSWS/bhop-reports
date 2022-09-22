@@ -33,6 +33,10 @@
   {
     "en" "Report Reason"
   }
+  "ReportAuditTitle"
+  {
+    "en" "AUDIT #{1}\n{2} reported {3}'s\n{4} {5} run ({6})\nReason: {7}\nHandler: "
+  }
   "PendingReason"
   {
     "en" "Please type the reason for your report"
@@ -90,6 +94,11 @@
   {
     "#format" "{1:s},{2:s}"
     "en" "{1}ERROR{2}: No records found."
+  }
+  "Blacklisted"
+  {
+    "#format" "{1:s},{2:s},{3:s},{4:d},{5:s}"
+    "en" "You are {1}blacklisted{2} from making reports ({3}#{4}{5})."
   }
   "UnknownError"
   {
