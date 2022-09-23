@@ -355,7 +355,7 @@ public Action Command_Report(int client, int args) {
     return Plugin_Handled;
 }
 
-public Action Command_ViewReport(int client, int args) {
+public Action Command_AuditReport(int client, int args) {
     if (args == 0 || !IsClientInGame(client))
         return Plugin_Handled;
     char sId[8];
