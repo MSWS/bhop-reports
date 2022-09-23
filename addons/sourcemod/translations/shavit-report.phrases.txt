@@ -35,7 +35,8 @@
   }
   "ReportAuditTitle"
   {
-    "en" "AUDIT #{1}\n{2} reported {3}'s\n{4} {5} run ({6})\nReason: {7}\nHandler: "
+    "#format" "{1:d},{2:s},{3:s},{4:s},{5:s},{6:s},{7:s},{8:s},{9:s}"
+    "en" "AUDIT #{1}\n{2} reported {3}'s\n{4} {5} run ({6})\nReason: {7}\nHandler: {8}\nResult: {9}"
   }
   "PendingReason"
   {
@@ -70,6 +71,26 @@
   {
     "#format" "{1:s},{2:d},{3:s},{4:s},{5:s},{6:s}"
     "en" "Rejected report {1}#{2}{3} and banned {4}{5}{6}."
+  }
+  "ReportAuditUnban"
+  {
+    "#format" "{1:s},{2:d},{3:s},{4:s},{5:s},{6:s}"
+    "en" "Auditing report {1}#{2}{3}, unbanning {4}{5}{6}."
+  }
+  "ReportAuditUnblackban"
+  {
+    "#format" "{1:s},{2:d},{3:s},{4:s},{5:s},{6:s}"
+    "en" "Auditing report {1}#{2}{3}, unbanning {4}{5}{6}."
+  }
+  "ReportAuditWhitelist"
+  {
+    "#format" "{1:s},{2:d},{3:s},{4:s},{5:s},{6:s}"
+    "en" "Auditing report {1}#{2}{3}, allowing {4}{5}{6} to make reports."
+  }
+  "ReportAuditDelete"
+  {
+    "#format" "{1:s},{2:d},{3:s}"
+    "en" "Deleted report {1}#{2}{3}."
   }
   "UnknownRecord"
   {

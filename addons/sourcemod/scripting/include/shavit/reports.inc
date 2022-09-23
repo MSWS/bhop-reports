@@ -1,3 +1,7 @@
+enum Resolution {
+  DELETE, BAN, WIPE, REJECT, BLACKLIST, BLACKBAN
+}
+
 enum struct report_t {
   int id;
   int recordId;
@@ -7,13 +11,10 @@ enum struct report_t {
   int style;
   char reporterName[MAX_NAME_LENGTH];
   char targetName[MAX_NAME_LENGTH];
+  char handlerName[MAX_NAME_LENGTH];
   char reason[128];
   int date;
   int handler;
-  int resolution;
+  Resolution resolution;
   int handledDate;
-}
-
-enum Resolution {
-  DELETE, BAN, WIPE, REJECT, BLACKLIST, BLACKBAN
 }

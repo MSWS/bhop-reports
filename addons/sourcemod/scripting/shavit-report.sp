@@ -14,6 +14,7 @@
 
 Database gH_SQL = null;
 ArrayList gH_Reports;
+report_t gH_Auditing[MAXPLAYERS + 1];
 stylestrings_t gS_StyleStrings[STYLE_LIMIT];
 chatstrings_t gS_ChatStrings;
 ConVar gCS_BanReason;
@@ -131,14 +132,14 @@ void LoadReports() {
     LogMessage("Loading reports...");
     gH_Reports.Clear();
     char sQuery[512];
-    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style` FROM `playertimes` AS times INNER JOIN `%sreports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) WHERE `handler` IS NULL AND `map` = '%s';", gS_SQLPrefix, gS_MapName);
+    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style`, `handlerClient`.`name` AS Handler FROM `playertimes` AS times INNER JOIN `%sreports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) INNER JOIN `users` AS handlerClient ON (report.handler=handlerClient.auth) WHERE `handler` IS NULL AND `map` = '%s';", gS_SQLPrefix, gS_MapName);
     QueryLog(gH_SQL, SQL_LoadedReports, sQuery, -1);
 }
 
-void ShowReport(int report, int client) {
+void AuditReport(int report, int client) {
     char sQuery[512];
-    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style` FROM `playertimes` AS times INNER JOIN `%sreports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) WHERE `id` = '%d';", gS_SQLPrefix, report);
-    QueryLog(gH_SQL, SQL_LoadedReports, sQuery, -1);
+    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style`, `handlerClient`.`name` AS Handler FROM `playertimes` AS times INNER JOIN `%sreports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) INNER JOIN `users` AS handlerClient ON (report.handler=handlerClient.auth) WHERE `report`.`id` = '%d';", gS_SQLPrefix, report);
+    QueryLog(gH_SQL, SQL_AuditReport, sQuery, client);
 }
 
 void SQL_LoadedReports(Database db, DBResultSet results, const char[] error, int reporter = -1) {
@@ -158,7 +159,7 @@ void SQL_LoadedReports(Database db, DBResultSet results, const char[] error, int
         LogMessage("Loaded %d reports", gH_Reports.Length);
 }
 
-void SQL_ShowReport(Database db, DBResultSet results, const char[] error, int client) {
+void SQL_AuditReport(Database db, DBResultSet results, const char[] error, int client) {
     if (results == null) {
         LogError("Timer error! Failed to load report data. Reason: %s", error);
         Shavit_PrintToChat(client, "%T", "UnknownError", gS_ChatStrings.sWarning, error, gS_ChatStrings.sText);
@@ -166,9 +167,10 @@ void SQL_ShowReport(Database db, DBResultSet results, const char[] error, int cl
     }
 
     if (!results.FetchRow()) {
-        Shavit_PrintToChat(client, "%T", "UnknownError", gS_ChatStrings.sWarning, "No match", gS_ChatStrings.sText);
+        Shavit_PrintToChat(client, "%T", "UnknownError", gS_ChatStrings.sWarning, "Invalid report ID", gS_ChatStrings.sText);
         return;
     }
+
     report_t report;
     LoadReport(results, report);
     OpenReportAuditMenu(client, report);
@@ -194,6 +196,10 @@ void SQL_Void(Database db, DBResultSet results, const char[] error, DataPack hPa
 
 void ResolveReport(int client, Resolution resolution) {
     report_t report;
+    if (gI_ActiveReport[client] == -1) {
+        Shavit_PrintToChat(client, "%T", "UnknownError", gS_ChatStrings.sWarning, "Invalid report ID", gS_ChatStrings.sText);
+        return;
+    }
     gH_Reports.GetArray(gI_ActiveReport[client], report);
     switch (resolution) {
         case DELETE: {
@@ -221,6 +227,12 @@ void ResolveReport(int client, Resolution resolution) {
 
         case BLACKLIST: {
             Shavit_PrintToChat(client, "%T", "ReportHandleBlacklist", client, gS_ChatStrings.sVariable, report.id, gS_ChatStrings.sText, gS_ChatStrings.sWarning, report.reporterName, gS_ChatStrings.sText);
+            for (int i = 1; i <= MaxClients; i++) {
+                if (!IsClientInGame(i) || report.reporter != GetSteamAccountID(i))
+                    continue;
+                gI_Blacklist[i] = report.id;
+                break;
+            }
             // Blacklist reporter
         }
         case BLACKBAN: {
@@ -249,6 +261,8 @@ void ResolveReport(int client, Resolution resolution) {
     gH_Reports.Erase(gI_ActiveReport[client]);
     for (int i = 1; i <= MaxClients; i++) {
         int active = gI_ActiveReport[i];
+        if (active == gI_ActiveReport[client])
+            gI_ActiveReport[i] = -1;
         if (active > gI_ActiveReport[client])
             gI_ActiveReport[i]--;
     }
@@ -344,6 +358,10 @@ public Action Command_Report(int client, int args) {
 public Action Command_ViewReport(int client, int args) {
     if (args == 0 || !IsClientInGame(client))
         return Plugin_Handled;
+    char sId[8];
+    GetCmdArg(1, sId, sizeof(sId));
+    AuditReport(client, StringToInt(sId));
+    return Plugin_Handled;
 }
 
 //
@@ -496,7 +514,31 @@ void OpenReportReasonMenu(int client) {
 }
 
 void OpenReportAuditMenu(int client, report_t report) {
-    
+    gH_Auditing[client] = report;
+    Menu menu           = CreateMenu(MenuHandler_ReportAudit);
+    char trackName[32], sTime[32];
+    GetTrackName(client, report.track, trackName, sizeof(trackName));
+    FormatSeconds(Shavit_GetWorldRecord(report.style, report.track), sTime, sizeof(sTime), true);
+    menu.SetTitle("%T\n ", "ReportAuditTitle",
+      client, report.id, report.reporterName, report.targetName, trackName,
+      gS_StyleStrings[report.style], sTime, report.reason, report.handlerName,
+      report.resolution);
+    menu.AddItem("Delete", "Delete the report");
+    switch (report.resolution) {
+        case BLACKLIST:
+            menu.AddItem("Unblacklist", "Remove Blacklist");
+        case BLACKBAN: {
+            char line[64];
+            Format(line, sizeof(line), "Unban %s", report.reporterName);
+            menu.AddItem("Unblackban", line);
+        }
+        case BAN: {
+            char line[64];
+            Format(line, sizeof(line), "Unban %s", report.targetName);
+            menu.AddItem("Unban", line);
+        }
+    }
+    menu.Display(client, 300);
 }
 
 //
@@ -559,6 +601,69 @@ int MenuHandler_ReportAction(Menu menu, MenuAction action, int param1, int param
     return 0;
 }
 
+int MenuHandler_ReportAudit(Menu menu, MenuAction action, int param1, int param2) {
+    if (action != MenuAction_Select) {
+        if (action == MenuAction_End)
+            delete menu;
+        return 0;
+    }
+    report_t report;
+    report = gH_Auditing[param1];
+    char item[64];
+    GetMenuItem(menu, param2, item, sizeof(item));
+    if (StrEqual(item, "Unban")) {
+        Shavit_PrintToChat(param1, "%T", "ReportAuditUnban", param1, gS_ChatStrings.sVariable, report.id, gS_ChatStrings.sText, gS_ChatStrings.sWarning, report.targetName, gS_ChatStrings.sText);
+        char sid[MAX_AUTHID_LENGTH], reason[64], sId[8];
+        gCS_BanReason.GetString(reason, sizeof(reason));
+        IntToString(report.id, sId, sizeof(sId));
+        ReplaceString(reason, sizeof(reason), "{id}", sId);
+        AccountIDToSteamID64(report.reported, sid, sizeof(sid));
+        FakeClientCommand(param1, "sm_unban %s", sid);
+    } else if (StrEqual(item, "Unblackban")) {
+        char sid[MAX_AUTHID_LENGTH], reason[64], sId[8];
+        gCS_BlacklistReason.GetString(reason, sizeof(reason));
+        IntToString(report.id, sId, sizeof(sId));
+        ReplaceString(reason, sizeof(reason), "{id}", sId);
+        AccountIDToSteamID64(report.reporter, sid, sizeof(sid));
+        FakeClientCommand(param1, "sm_unban %s", sid);
+        Shavit_PrintToChat(param1, "%T", "ReportAuditUnblackban", param1, gS_ChatStrings.sVariable, report.id, gS_ChatStrings.sText, gS_ChatStrings.sWarning, report.reporterName, gS_ChatStrings.sText);
+    } else if (StrEqual(item, "Unblacklist")) {
+        Shavit_PrintToChat(param1, "%T", "ReportAuditWhitelist", param1, gS_ChatStrings.sVariable, report.id, gS_ChatStrings.sText, gS_ChatStrings.sWarning, report.reporterName, gS_ChatStrings.sText);
+        report.resolution = REJECT;
+        char sQuery[256];
+        Format(sQuery, sizeof(sQuery), "UPDATE `%sreports` SET `resolution` = %d WHERE `id` = '%d'", gS_SQLPrefix, view_as<int>(REJECT), report.id);
+        QueryLog(gH_SQL, SQL_Void, sQuery);
+    } else if (StrEqual(item, "Delete")) {
+        Shavit_PrintToChat(param1, "%T", "ReportAuditDelete", param1, gS_ChatStrings.sVariable, report.id, gS_ChatStrings.sText);
+        char sQuery[256];
+        Format(sQuery, sizeof(sQuery), "DELETE FROM `%sreports` WHERE `id` = '%d'", gS_SQLPrefix, view_as<int>(REJECT), report.id);
+        QueryLog(gH_SQL, SQL_Void, sQuery);
+        report_t empty;
+        gH_Auditing[param1] = empty;
+        int active          = -1;
+        for (int i = 0; i < gH_Reports.Length; i++) {
+            report_t rep;
+            gH_Reports.GetArray(i, rep);
+            if (rep.id == report.id) {
+                active = i;
+                break;
+            }
+        }
+        if (active == -1)
+            return 0;
+        gH_Reports.Erase(active);
+        for (int i = 1; i <= MaxClients; i++) {
+            int act = gI_ActiveReport[i];
+            if (act == active)
+                gI_ActiveReport[i] = -1;
+            if (act > active)
+                gI_ActiveReport[i]--;
+        }
+    } else
+        Shavit_PrintToChat(param1, "%T", "UnknownError", param1, gS_ChatStrings.sWarning, "Invalid MenuItem", gS_ChatStrings.sText);
+    return 0;
+}
+
 int MenuHandler_ReportTrack(Menu menu, MenuAction action, int param1, int param2) {
     if (action != MenuAction_Select) {
         if (action == MenuAction_End)
@@ -614,18 +719,18 @@ int MenuHandler_ReplayStyle(Menu menu, MenuAction action, int param1, int param2
 }
 
 void LoadReport(DBResultSet results, report_t buffer) {
-    // id recordId reporter reason `date` handler resolution handledDate Recorder Reporter track `style`
-    // report_t report;
+    // id recordId reporter reason `date` handler resolution handledDate Recorder Reporter track `style` HandlerName
     buffer.id       = results.FetchInt(0);
     buffer.recordId = results.FetchInt(1);
     buffer.reporter = results.FetchInt(2);
     results.FetchString(3, buffer.reason, sizeof(buffer.reason));
     buffer.date        = results.FetchInt(4);
     buffer.handler     = results.FetchInt(5);
-    buffer.resolution  = results.FetchInt(6);
+    buffer.resolution  = view_as<Resolution>(results.FetchInt(6));
     buffer.handledDate = results.FetchInt(7);
     results.FetchString(8, buffer.targetName, sizeof(buffer.reporterName));
     results.FetchString(9, buffer.reporterName, sizeof(buffer.reporterName));
     buffer.track = results.FetchInt(10);
     buffer.style = results.FetchInt(11);
+    results.FetchString(12, buffer.handlerName, sizeof(buffer.handlerName));
 }
