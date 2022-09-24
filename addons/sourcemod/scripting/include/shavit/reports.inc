@@ -2,6 +2,15 @@ enum Resolution {
   DELETE, BAN, WIPE, REJECT, BLACKLIST, BLACKBAN
 }
 
+char gS_Resolutions[][] = {
+  "Deleted Record",
+  "Banned User",
+  "Wiped Data",
+  "Rejected",
+  "Blacklisted Reporter",
+  "Banned Reporter"
+};
+
 enum struct report_t {
   int id;
   int recordId;
@@ -17,4 +26,5 @@ enum struct report_t {
   int handler;
   Resolution resolution;
   int handledDate;
+  float time;
 }

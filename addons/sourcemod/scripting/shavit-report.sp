@@ -63,6 +63,8 @@ public void OnPluginStart() {
     LoadTranslations("shavit-common.phrases");
 
     RegAdminCmd("sm_reports", Command_Reports, ADMFLAG_BAN, "View player reports");
+    RegAdminCmd("sm_audit", Command_AuditReport, ADMFLAG_CHEATS, "Audit reports");
+    RegAdminCmd("sm_auditreport", Command_AuditReport, ADMFLAG_CHEATS, "Audit reports");
     RegConsoleCmd("sm_report", Command_Report, "Report a player's record");
 
     gCS_BanReason         = CreateConVar("shavit_reports_reason", "#{id} Record Violation", "Report ban reason");
@@ -77,6 +79,10 @@ public void OnPluginStart() {
     if (gB_Late) {
         Shavit_OnStyleConfigLoaded(Shavit_GetStyleCount());
         Shavit_OnChatConfigLoaded();
+        for (int i = 1; i <= MaxClients; i++) {
+            if (IsClientInGame(i) && !IsFakeClient(i))
+                CheckReportBlacklist(i);
+        }
     }
 
     CreateSQL();
@@ -123,7 +129,7 @@ public void Shavit_OnChatConfigLoaded() {
 void CreateSQL() {
     char sQuery[512];
     FormatEx(sQuery, sizeof(sQuery),
-      "CREATE TABLE IF NOT EXISTS `%sreports` (`id` INT AUTO_INCREMENT NOT NULL, `recordId` INT NOT NULL, `reporter` INT NOT NULL, `reason` VARCHAR(128) NOT NULL, `date` TIMESTAMP NOT NULL DEFAULT NOW(), `handler` INT, `resolution` INT, `handledDate` TIMESTAMP, PRIMARY KEY (`id`), FOREIGN KEY (`reporter`) REFERENCES %susers(`auth`), FOREIGN KEY (`recordId`) REFERENCES %splayertimes(`id`) ON DELETE CASCADE, FOREIGN KEY (`handler`) REFERENCES %susers(`auth`));",
+      "CREATE TABLE IF NOT EXISTS `%sreports` (`id` INT AUTO_INCREMENT NOT NULL, `recordId` INT NOT NULL, `reporter` INT NOT NULL, `reason` VARCHAR(128) NOT NULL, `date` TIMESTAMP NOT NULL DEFAULT NOW(), `handler` INT, `resolution` INT DEFAULT -1, `handledDate` TIMESTAMP, PRIMARY KEY (`id`), FOREIGN KEY (`reporter`) REFERENCES %susers(`auth`), FOREIGN KEY (`recordId`) REFERENCES %splayertimes(`id`) ON DELETE CASCADE, FOREIGN KEY (`handler`) REFERENCES %susers(`auth`));",
       gS_SQLPrefix, gS_SQLPrefix, gS_SQLPrefix, gS_SQLPrefix);
     QueryLog(gH_SQL, SQL_Void, sQuery);
 }
@@ -131,15 +137,18 @@ void CreateSQL() {
 void LoadReports() {
     LogMessage("Loading reports...");
     gH_Reports.Clear();
-    char sQuery[512];
-    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style`, `handlerClient`.`name` AS Handler FROM `playertimes` AS times INNER JOIN `%sreports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) INNER JOIN `users` AS handlerClient ON (report.handler=handlerClient.auth) WHERE `handler` IS NULL AND `map` = '%s';", gS_SQLPrefix, gS_MapName);
+    char sQuery[1024];
+    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style`, `handlerClient`.`name` AS Handler, `times`.`time` FROM `playertimes` AS times INNER JOIN `%sreports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) LEFT JOIN `users` AS handlerClient ON (report.handler=handlerClient.auth) WHERE `handler` IS NULL AND `map` = '%s';", gS_SQLPrefix, gS_MapName);
     QueryLog(gH_SQL, SQL_LoadedReports, sQuery, -1);
 }
 
-void AuditReport(int report, int client) {
-    char sQuery[512];
-    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style`, `handlerClient`.`name` AS Handler FROM `playertimes` AS times INNER JOIN `%sreports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) INNER JOIN `users` AS handlerClient ON (report.handler=handlerClient.auth) WHERE `report`.`id` = '%d';", gS_SQLPrefix, report);
+void AuditReport(int client, int report) {
+    char sQuery[1024];
+    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style`, `handlerClient`.`name` AS Handler, `times`.`time` FROM `playertimes` AS times INNER JOIN `%sreports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) LEFT JOIN `users` AS handlerClient ON (report.handler=handlerClient.auth) WHERE `report`.`id` = '%d';", gS_SQLPrefix, report);
     QueryLog(gH_SQL, SQL_AuditReport, sQuery, client);
+}
+
+void FetchReportStats(int client) {
 }
 
 void SQL_LoadedReports(Database db, DBResultSet results, const char[] error, int reporter = -1) {
@@ -151,6 +160,7 @@ void SQL_LoadedReports(Database db, DBResultSet results, const char[] error, int
     while (results.FetchRow()) {
         report_t report;
         LoadReport(results, report);
+        gH_Reports.PushArray(report);
         if (reporter != -1)
             Shavit_PrintToChat(reporter, "%T", "ReportSubmittedID", reporter, gS_ChatStrings.sVariable, report.id, gS_ChatStrings.sText);
     }
@@ -162,12 +172,12 @@ void SQL_LoadedReports(Database db, DBResultSet results, const char[] error, int
 void SQL_AuditReport(Database db, DBResultSet results, const char[] error, int client) {
     if (results == null) {
         LogError("Timer error! Failed to load report data. Reason: %s", error);
-        Shavit_PrintToChat(client, "%T", "UnknownError", gS_ChatStrings.sWarning, error, gS_ChatStrings.sText);
+        Shavit_PrintToChat(client, "%T", "UnknownError", client, gS_ChatStrings.sWarning, error, gS_ChatStrings.sText);
         return;
     }
 
     if (!results.FetchRow()) {
-        Shavit_PrintToChat(client, "%T", "UnknownError", gS_ChatStrings.sWarning, "Invalid report ID", gS_ChatStrings.sText);
+        Shavit_PrintToChat(client, "%T", "UnknownError", client, gS_ChatStrings.sWarning, "Invalid report ID", gS_ChatStrings.sText);
         return;
     }
 
@@ -176,22 +186,24 @@ void SQL_AuditReport(Database db, DBResultSet results, const char[] error, int c
     OpenReportAuditMenu(client, report);
 }
 
-void UploadReport(report_t report) {
+void UploadReport(report_t report, int client) {
     char sQuery[512];
     gH_SQL.Escape(report.reason, report.reason, sizeof(report.reason));
     FormatEx(sQuery, sizeof(sQuery), "INSERT INTO `%sreports` (`recordId`, `reporter`, `reason`) VALUES('%d', '%d', '%s');", gS_SQLPrefix, report.recordId, report.reporter, report.reason);
-    QueryLog(gH_SQL, SQL_Void, sQuery);
+    LogMessage("SQL: %s", sQuery);
+
+    DataPack pack = new DataPack();
+    pack.WriteCellArray(report, sizeof(report_t));
+    pack.WriteCell(client);
+
+    QueryLog(gH_SQL, SQL_Uploaded, sQuery, pack);
 }
 
 void UpdateReport(report_t report, int client = -1) {
-    char sQuery[512];
-    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style` FROM `playertimes` AS times INNER JOIN `%sreports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) WHERE `reason` = '%s' AND `reporter` = '%d' ORDER BY `date` DESC LIMIT 1;", gS_SQLPrefix, report.reason, report.reporter);
+    char sQuery[1024];
+    FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style`, `handlerClient`.`name` AS Handler, `times`.`time` FROM `playertimes` AS times INNER JOIN `%sreports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) LEFT JOIN `users` AS handlerClient ON (report.handler=handlerClient.auth) WHERE `reason` = '%s' AND `reporter` = '%d' ORDER BY `date` DESC LIMIT 1;", gS_SQLPrefix, report.reason, report.reporter);
+    LogMessage("SQL: %s", sQuery);
     QueryLog(gH_SQL, SQL_LoadedReports, sQuery, client);
-}
-
-void SQL_Void(Database db, DBResultSet results, const char[] error, DataPack hPack) {
-    if (results == null)
-        LogError("SQL error! Reason: %s", error);
 }
 
 void ResolveReport(int client, Resolution resolution) {
@@ -272,8 +284,8 @@ void ResolveReport(int client, Resolution resolution) {
 void CheckReportBlacklist(int client) {
     char sQuery[256];
     Format(sQuery, sizeof(sQuery),
-      "SELECT `id` FROM `%sreports` WHERE `reporter` = '%d' AND `handledDate` > DATE_SUB(NOW(), INTERVAL %d MINUTE) ORDER BY `handledDate` DESC LIMIT 1;",
-      gS_SQLPrefix, GetSteamAccountID(client), RoundFloat(gCF_BlacklistDuration.FloatValue));
+      "SELECT `id` FROM `%sreports` WHERE `reporter` = '%d' AND `resolution` = '%d' AND `handledDate` > DATE_SUB(NOW(), INTERVAL %d MINUTE) ORDER BY `handledDate` DESC LIMIT 1;",
+      gS_SQLPrefix, GetSteamAccountID(client), view_as<int>(BLACKLIST), RoundFloat(gCF_BlacklistDuration.FloatValue));
     QueryLog(gH_SQL, SQL_BlacklistCheck, sQuery, client);
 }
 
@@ -287,6 +299,22 @@ void SQL_BlacklistCheck(Database db, DBResultSet results, const char[] error, in
         return;
     }
     gI_Blacklist[client] = results.FetchInt(0);
+}
+
+void SQL_Void(Database db, DBResultSet results, const char[] error, DataPack hPack) {
+    if (results == null)
+        LogError("SQL error! Reason: %s", error);
+}
+
+void SQL_Uploaded(Database db, DBResultSet results, const char[] error, DataPack hPack) {
+    if (results == null)
+        LogError("SQL error! Reason: %s", error);
+    hPack.Reset();
+    report_t report;
+    hPack.ReadCellArray(report, sizeof(report_t));
+    int client = hPack.ReadCell();
+    UpdateReport(report, client);
+    delete hPack;
 }
 
 //
@@ -349,15 +377,20 @@ public Action Command_Report(int client, int args) {
     report.date     = GetTime();
     report.reporter = GetSteamAccountID(client);
     strcopy(report.reason, sizeof(report.reason), sArgs[2]);
-    UploadReport(report);
-    UpdateReport(report, client); // Refetch report data to grab ID
+    UploadReport(report, client);
+    // UpdateReport(report, client); // Refetch report data to grab ID
     Shavit_PrintToChat(client, "%T", "ReportSubmitted", client);
     return Plugin_Handled;
 }
 
 public Action Command_AuditReport(int client, int args) {
-    if (args == 0 || !IsClientInGame(client))
+    if (!IsClientInGame(client))
         return Plugin_Handled;
+
+    if (args == 0) {
+        Shavit_PrintToChat(client, "Please specify a report ID.");
+        return Plugin_Handled;
+    }
     char sId[8];
     GetCmdArg(1, sId, sizeof(sId));
     AuditReport(client, StringToInt(sId));
@@ -394,7 +427,7 @@ void OpenReportViewMenu(int client, int reportIndex = -1) {
     Menu menu = new Menu(MenuHandler_ReportAction);
     char trackName[32], sTime[32];
     GetTrackName(client, report.track, trackName, sizeof(trackName));
-    FormatSeconds(Shavit_GetWorldRecord(report.style, report.track), sTime, sizeof(sTime), true);
+    FormatSeconds(report.time, sTime, sizeof(sTime), true);
     menu.SetTitle("%T\n ", "ReportInfoTitle", client, report.id, report.reporterName, report.targetName, trackName, gS_StyleStrings[report.style], sTime, report.reason);
     menu.AddItem("View", "View Replay", Shavit_IsReplayDataLoaded(report.style, report.track) ? ITEMDRAW_DEFAULT : ITEMDRAW_DISABLED);
 
@@ -518,12 +551,12 @@ void OpenReportAuditMenu(int client, report_t report) {
     Menu menu           = CreateMenu(MenuHandler_ReportAudit);
     char trackName[32], sTime[32];
     GetTrackName(client, report.track, trackName, sizeof(trackName));
-    FormatSeconds(Shavit_GetWorldRecord(report.style, report.track), sTime, sizeof(sTime), true);
+    FormatSeconds(report.time, sTime, sizeof(sTime), true);
     menu.SetTitle("%T\n ", "ReportAuditTitle",
       client, report.id, report.reporterName, report.targetName, trackName,
-      gS_StyleStrings[report.style], sTime, report.reason, report.handlerName,
-      report.resolution);
-    menu.AddItem("Delete", "Delete the report");
+      gS_StyleStrings[report.style], sTime, report.reason, view_as<int>(report.resolution) == -1 ? "N/A" : report.handlerName,
+      view_as<int>(report.resolution) == -1 ? "N/A" : gS_Resolutions[report.resolution]);
+    menu.AddItem("Delete", "Delete Report");
     switch (report.resolution) {
         case BLACKLIST:
             menu.AddItem("Unblacklist", "Remove Blacklist");
@@ -633,10 +666,14 @@ int MenuHandler_ReportAudit(Menu menu, MenuAction action, int param1, int param2
         char sQuery[256];
         Format(sQuery, sizeof(sQuery), "UPDATE `%sreports` SET `resolution` = %d WHERE `id` = '%d'", gS_SQLPrefix, view_as<int>(REJECT), report.id);
         QueryLog(gH_SQL, SQL_Void, sQuery);
+        for (int i = 1; i <= MaxClients; i++) {
+            if (gI_Blacklist[i] == report.id)
+                CheckReportBlacklist(i);
+        }
     } else if (StrEqual(item, "Delete")) {
         Shavit_PrintToChat(param1, "%T", "ReportAuditDelete", param1, gS_ChatStrings.sVariable, report.id, gS_ChatStrings.sText);
         char sQuery[256];
-        Format(sQuery, sizeof(sQuery), "DELETE FROM `%sreports` WHERE `id` = '%d'", gS_SQLPrefix, view_as<int>(REJECT), report.id);
+        Format(sQuery, sizeof(sQuery), "DELETE FROM `%sreports` WHERE `id` = '%d'", gS_SQLPrefix, report.id);
         QueryLog(gH_SQL, SQL_Void, sQuery);
         report_t empty;
         gH_Auditing[param1] = empty;
@@ -718,8 +755,14 @@ int MenuHandler_ReplayStyle(Menu menu, MenuAction action, int param1, int param2
     return 0;
 }
 
+int MenuHandler_ReportStats(Menu menu, MenuAction action, int param1, int param2) {
+}
+
+/**
+ * Loads the report from the DBResultSet and fills the given buffer
+ */
 void LoadReport(DBResultSet results, report_t buffer) {
-    // id recordId reporter reason `date` handler resolution handledDate Recorder Reporter track `style` HandlerName
+    // id recordId reporter reason `date` handler resolution handledDate Recorder Reporter track `style` HandlerName time
     buffer.id       = results.FetchInt(0);
     buffer.recordId = results.FetchInt(1);
     buffer.reporter = results.FetchInt(2);
@@ -727,10 +770,12 @@ void LoadReport(DBResultSet results, report_t buffer) {
     buffer.date        = results.FetchInt(4);
     buffer.handler     = results.FetchInt(5);
     buffer.resolution  = view_as<Resolution>(results.FetchInt(6));
+    LogMessage("Resolution: %d", buffer.resolution);
     buffer.handledDate = results.FetchInt(7);
     results.FetchString(8, buffer.targetName, sizeof(buffer.reporterName));
     results.FetchString(9, buffer.reporterName, sizeof(buffer.reporterName));
     buffer.track = results.FetchInt(10);
     buffer.style = results.FetchInt(11);
     results.FetchString(12, buffer.handlerName, sizeof(buffer.handlerName));
+    buffer.time = results.FetchFloat(13);
 }

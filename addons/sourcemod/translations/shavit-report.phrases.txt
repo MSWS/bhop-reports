@@ -36,7 +36,7 @@
   "ReportAuditTitle"
   {
     "#format" "{1:d},{2:s},{3:s},{4:s},{5:s},{6:s},{7:s},{8:s},{9:s}"
-    "en" "AUDIT #{1}\n{2} reported {3}'s\n{4} {5} run ({6})\nReason: {7}\nHandler: {8}\nResult: {9}"
+    "en" "Auditing #{1}\n{2} reported {3}'s\n{4} {5} run ({6})\nReason: {7}\nHandler: {8}\nResult: {9}"
   }
   "PendingReason"
   {
@@ -99,7 +99,7 @@
   }
   "ReportSubmitted"
   {
-    "en" "Your report has been submitted."
+    "en" "Your report is being submitted..."
   }
   "ReportSubmittedID"
   {
