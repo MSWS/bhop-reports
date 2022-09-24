@@ -149,6 +149,26 @@ void AuditReport(int client, int report) {
 }
 
 void FetchReportStats(int client) {
+    char sQuery[256];
+    FormatEx(sQuery, sizeof(sQuery), "SELECT COUNT(*), COUNT(CASE WHEN `handler` IS NULL THEN NULL ELSE 1 END) FROM `reports`;", gS_SQLPrefix);
+    QueryLog(gH_SQL, SQL_LoadedTotalStats, sQuery, client);
+}
+
+void SQL_LoadedTotalStats(Database db, DBResultSet results, const char[] error, int client) {
+    if (results == null) {
+        LogError("Timer error! Failed to load report data. Reason: %s", error);
+        return;
+    }
+    int total   = results.FetchInt(0);
+    int handled = results.FetchInt(1);
+    Menu menu   = CreateMenu(MenuHandler_ReportStats);
+    menu.SetTitle("Report Stats\nHandled: %d/%d (%.2f%%)", handled, total, (handled / total) * 100);
+    menu.AddItem("reporters", "Biggest Reporters");
+    menu.AddItem("reported", "Most Reported");
+    menu.AddItem("accuracy", "Most Accurate Reporters");
+    menu.AddItem("handlers", "Biggest Handlers");
+    menu.AddItem("maps", "Most Reported Maps");
+    menu.AddItem("resolutions", "Resolution Stats");
 }
 
 void SQL_LoadedReports(Database db, DBResultSet results, const char[] error, int reporter = -1) {
@@ -756,6 +776,62 @@ int MenuHandler_ReplayStyle(Menu menu, MenuAction action, int param1, int param2
 }
 
 int MenuHandler_ReportStats(Menu menu, MenuAction action, int param1, int param2) {
+    if (action != MenuAction_Select) {
+        if (action == MenuAction_End)
+            delete menu;
+        return 0;
+    }
+    char sInfo[16];
+    menu.GetItem(param2, sInfo, 8);
+    char sQuery[1024];
+    if (StrEqual(sInfo, "reporters")) {
+        // Username | Reports SELECT `reporter`, COUNT(*) FROM `reports` GROUP BY `reporter` ORDER BY COUNT(*) DESC LIMIT 50;
+        FormatEx(sQuery, sizeof(sQuery),
+          "SELECT `reporter`, COUNT(*) FROM `%sreports` GROUP BY `reporter` ORDER BY COUNT(*) DESC LIMIT 50;", gS_SQLPrefix);
+        QueryLog(gH_SQL, SQL_LoadReporters, sQuery, param1);
+    } else if (StrEqual(sInfo, "reported")) {
+        // (Target) Username | Reports SELECT usr.name, COUNT(*) FROM `reports` LEFT JOIN `playertimes` AS pt ON (pt.id = recordId) LEFT JOIN `users` AS usr ON (usr.auth = pt.auth) GROUP BY pt.auth ORDER BY COUNT(*) DESC LIMIT 50;
+        FormatEx(sQuery, sizeof(sQuery),
+          "SELECT usr.name, COUNT(*) FROM `%sreports` LEFT JOIN `%splayertimes` AS pt ON (pt.id = recordId) LEFT JOIN `%susers` AS usr ON (usr.auth = pt.auth) GROUP BY pt.auth ORDER BY COUNT(*) DESC LIMIT 50;",
+          gS_SQLPrefix, gS_SQLPrefix, gS_SQLPrefix);
+    } else if (StrEqual(sInfo, "accuracy")) {
+        // Username | Amount | Resolution SELECT `reporter`, COUNT(*), `resolution` FROM `reports` WHERE `handler` IS NOT NULL GROUP BY `reporter`, `resolution`;
+        FormatEx(sQuery, sizeof(sQuery),
+          "SELECT `reporter`, COUNT(*), `resolution` FROM `%sreports` WHERE `handler` IS NOT NULL GROUP BY `reporter`, `resolution`;", gS_SQLPrefix);
+    } else if (StrEqual(sInfo, "handlers")) {
+        // Username | Handled SELECT `handler`, COUNT(*) FROM `reports` WHERE `handler` IS NOT NULL GROUP BY `handler` ORDER BY COUNT(*) DESC LIMIT 50;
+        FormatEx(sQuery, sizeof(sQuery),
+          "SELECT `handler`, COUNT(*) FROM `%sreports` WHERE `handler` IS NOT NULL GROUP BY `handler` ORDER BY COUNT(*) DESC LIMIT 50;", gS_SQLPrefix);
+    } else if (StrEqual(sInfo, "maps")) {
+        // Amount | Map SELECT COUNT(*), `record`.`map` FROM `reports` LEFT JOIN `playertimes` AS record ON (record.id = reports.recordId) GROUP BY(`record`.`map`) ORDER BY COUNT(*) DESC LIMIT 50;
+        FormatEx(sQuery, sizeof(sQuery),
+          "SELECT COUNT(*), `record`.`map` FROM `%sreports` LEFT JOIN `%splayertimes` AS record ON (record.id = reports.recordId) GROUP BY(`record`.`map`) ORDER BY COUNT(*) DESC LIMIT 50;",
+          gS_SQLPrefix, gS_SQLPrefix);
+    } else if (StrEqual(sInfo, "resolutions")) {
+        // Amount | Resolution SELECT COUNT(*), `resolution` FROM `reports` WHERE `handler` IS NOT NULL GROUP BY `resolution`;
+        FormatEx(sQuery, sizeof(sQuery),
+          "SELECT COUNT(*), `resolution` FROM `%sreports` WHERE `handler` IS NOT NULL GROUP BY `resolution`;", gS_SQLPrefix);
+    }
+
+    return 0;
+}
+
+void SQL_LoadReporters(Database db, DBResultSet results, const char[] error, int client) {
+    if (results == null) {
+        LogError("SQL error! Reason: %s", error);
+        return;
+    }
+
+    Menu menu = new Menu(MenuHandler_ReportStats);
+    menu.SetTitle("Biggets Reporters (%d)", results.RowCount);
+    char line[64];
+    while (results.FetchRow()) {
+        char name[MAX_NAME_LENGTH];
+        results.FetchString(0, name, sizeof(name));
+        Format(line, sizeof(line), "%s: %d", name, results.FetchInt(1));
+        menu.AddItem("", line, ITEMDRAW_DISABLED);
+    }
+    menu.Display(client, MENU_TIME_FOREVER);
 }
 
 /**
@@ -770,7 +846,6 @@ void LoadReport(DBResultSet results, report_t buffer) {
     buffer.date        = results.FetchInt(4);
     buffer.handler     = results.FetchInt(5);
     buffer.resolution  = view_as<Resolution>(results.FetchInt(6));
-    LogMessage("Resolution: %d", buffer.resolution);
     buffer.handledDate = results.FetchInt(7);
     results.FetchString(8, buffer.targetName, sizeof(buffer.reporterName));
     results.FetchString(9, buffer.reporterName, sizeof(buffer.reporterName));
