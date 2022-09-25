@@ -5,6 +5,9 @@
 #include <shavit/replay-playback>
 #include <shavit/steamid-stocks>
 
+#undef REQUIRE_PLUGIN
+#include <discord>
+
 #pragma newdecls required
 #pragma semicolon 1
 
@@ -21,6 +24,7 @@ ConVar gCS_BanReason;
 ConVar gCS_BlacklistReason;
 ConVar gCF_BanDuration;
 ConVar gCF_BlacklistDuration;
+ConVar gCS_WebhookURL;
 char gS_SQLPrefix[32];
 char gS_MapName[PLATFORM_MAX_PATH];
 int gI_ActiveReport[MAXPLAYERS + 1];
@@ -29,7 +33,8 @@ int gI_MenuStyle[MAXPLAYERS + 1];
 int gI_Blacklist[MAXPLAYERS + 1] = { -1, ... };
 int gI_Styles;
 bool gB_Chat[MAXPLAYERS + 1];
-bool gB_Late = false;
+bool gB_Late    = false;
+bool gB_Discord = false;
 
 char gS_Reasons[5][64] = {
     "Improper Zones (Start)",
@@ -72,6 +77,7 @@ public void OnPluginStart() {
     gCS_BlacklistReason   = CreateConVar("shavit_blacklist_reason", "#{id} Report Violation", "Report blacklist reason");
     gCF_BanDuration       = CreateConVar("shavit_reports_bantime", "40320", "Default ban duration", _, true, -1.0, true, 120960.0);
     gCF_BlacklistDuration = CreateConVar("shavit_blacklist_bantime", "10080", "Default blacklist duration", _, true, -1.0, true, 120960.0);
+    gCS_WebhookURL        = CreateConVar("shavit_reports_webhook", "", "Webhook URL for Discord integration");
 
     AutoExecConfig();
     GetTimerSQLPrefix(gS_SQLPrefix, sizeof(gS_SQLPrefix));
@@ -82,11 +88,11 @@ public void OnPluginStart() {
         Shavit_OnChatConfigLoaded();
         for (int i = 1; i <= MaxClients; i++) {
             if (IsClientInGame(i) && !IsFakeClient(i))
-                CheckReportBlacklist(i);
+                SQL_CheckBlacklist(i);
         }
     }
 
-    CreateSQL();
+    SQL_CreateSQL();
 }
 
 //
@@ -94,7 +100,7 @@ public void OnPluginStart() {
 //
 public void OnMapStart() {
     GetCurrentMap(gS_MapName, sizeof(gS_MapName));
-    LoadReports();
+    SQL_LoadReports();
 }
 
 public Action OnClientSayCommand(int client, const char[] cmd, const char[] args) {
@@ -107,7 +113,21 @@ public Action OnClientSayCommand(int client, const char[] cmd, const char[] args
 
 public void OnClientConnected(int client) {
     gI_Blacklist[client] = -1;
-    CheckReportBlacklist(client);
+    SQL_CheckBlacklist(client);
+}
+
+public void OnAllPluginsLoaded() {
+    gB_Discord = LibraryExists("discord-api");
+}
+
+public void OnLibraryAdded(const char[] name) {
+    if (StrEqual(name, "discord-api"))
+        gB_Discord = true;
+}
+
+public void OnLibraryRemoved(const char[] name) {
+    if (StrEqual(name, "discord-api"))
+        gB_Discord = false;
 }
 
 //
@@ -127,7 +147,52 @@ public void Shavit_OnChatConfigLoaded() {
 //// SQL Functions
 //
 
-void CreateSQL() {
+void SQL_LoadResolutions(Database db, DBResultSet results, const char[] error, DataPack data) {
+    if (results == null) {
+        LogError("SQL error! Reason: %s", error);
+        return;
+    }
+    data.Reset();
+    char title[32];
+    int client = data.ReadCell();
+    data.ReadString(title, sizeof(title));
+    delete data;
+    Panel panel = new Panel();
+    panel.SetTitle(title);
+    char line[32];
+    while (results.FetchRow()) {
+        int resolution = results.FetchInt(0);
+        int count      = results.FetchInt(1);
+        Format(line, sizeof(line), "%s: %d", resolution == -1 ? "Unhandled" : gS_Resolutions[resolution], count);
+        panel.DrawText(line);
+    }
+    panel.DrawItem("Back");
+    panel.Send(client, MenuHandler_ReportStatsGeneric, MENU_TIME_FOREVER);
+}
+
+void SQL_LoadStringInt(Database db, DBResultSet results, const char[] error, DataPack data) {
+    if (results == null) {
+        LogError("SQL error! Reason: %s", error);
+        return;
+    }
+    data.Reset();
+    char title[32];
+    int client = data.ReadCell();
+    data.ReadString(title, sizeof(title));
+    delete data;
+    Menu menu = new Menu(MenuHandler_ReportStatsGeneric);
+    menu.SetTitle(title);
+    char line[64];
+    while (results.FetchRow()) {
+        char name[MAX_NAME_LENGTH];
+        results.FetchString(0, name, sizeof(name));
+        Format(line, sizeof(line), "%s: %d", name, results.FetchInt(1));
+        menu.AddItem("", line, ITEMDRAW_DISABLED);
+    }
+    menu.Display(client, MENU_TIME_FOREVER);
+}
+
+void SQL_CreateSQL() {
     char sQuery[512];
     FormatEx(sQuery, sizeof(sQuery),
       "CREATE TABLE IF NOT EXISTS `%sreports` (`id` INT AUTO_INCREMENT NOT NULL, `recordId` INT NOT NULL, `reporter` INT NOT NULL, `reason` VARCHAR(128) NOT NULL, `date` TIMESTAMP NOT NULL DEFAULT NOW(), `handler` INT, `resolution` INT DEFAULT -1, `handledDate` TIMESTAMP, PRIMARY KEY (`id`), FOREIGN KEY (`reporter`) REFERENCES %susers(`auth`), FOREIGN KEY (`recordId`) REFERENCES %splayertimes(`id`) ON DELETE CASCADE, FOREIGN KEY (`handler`) REFERENCES %susers(`auth`));",
@@ -135,7 +200,7 @@ void CreateSQL() {
     QueryLog(gH_SQL, SQL_Void, sQuery);
 }
 
-void LoadReports() {
+void SQL_LoadReports() {
     LogMessage("Loading reports...");
     gH_Reports.Clear();
     char sQuery[1024];
@@ -143,13 +208,13 @@ void LoadReports() {
     QueryLog(gH_SQL, SQL_LoadedReports, sQuery, -1);
 }
 
-void AuditReport(int client, int report) {
+void SQL_AuditReport(int client, int report) {
     char sQuery[1024];
     FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style`, `handlerClient`.`name` AS Handler, `times`.`time` FROM `playertimes` AS times INNER JOIN `%sreports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) LEFT JOIN `users` AS handlerClient ON (report.handler=handlerClient.auth) WHERE `report`.`id` = '%d';", gS_SQLPrefix, report);
-    QueryLog(gH_SQL, SQL_AuditReport, sQuery, client);
+    QueryLog(gH_SQL, SQL_AuditLoaded, sQuery, client);
 }
 
-void FetchReportStats(int client) {
+void SQL_FetchReportStats(int client) {
     char sQuery[256];
     FormatEx(sQuery, sizeof(sQuery), "SELECT COUNT(*), COUNT(CASE WHEN `handler` IS NULL THEN NULL ELSE 1 END) FROM `reports`;", gS_SQLPrefix);
     QueryLog(gH_SQL, SQL_LoadedTotalStats, sQuery, client);
@@ -188,15 +253,19 @@ void SQL_LoadedReports(Database db, DBResultSet results, const char[] error, int
         report_t report;
         LoadReport(results, report);
         gH_Reports.PushArray(report);
-        if (reporter != -1)
+        if (reporter != -1) {
             Shavit_PrintToChat(reporter, "%T", "ReportSubmittedID", reporter, gS_ChatStrings.sVariable, report.id, gS_ChatStrings.sText);
+            LogMessage("Discord: %b", gB_Discord);
+            if (gB_Discord)
+                PostWebhook(report);
+        }
     }
 
     if (reporter == -1)
         LogMessage("Loaded %d reports", gH_Reports.Length);
 }
 
-void SQL_AuditReport(Database db, DBResultSet results, const char[] error, int client) {
+void SQL_AuditLoaded(Database db, DBResultSet results, const char[] error, int client) {
     if (results == null) {
         LogError("Timer error! Failed to load report data. Reason: %s", error);
         Shavit_PrintToChat(client, "%T", "UnknownError", client, gS_ChatStrings.sWarning, error, gS_ChatStrings.sText);
@@ -213,7 +282,7 @@ void SQL_AuditReport(Database db, DBResultSet results, const char[] error, int c
     OpenReportAuditMenu(client, report);
 }
 
-void UploadReport(report_t report, int client) {
+void SQL_UploadReport(report_t report, int client) {
     char sQuery[512];
     gH_SQL.Escape(report.reason, report.reason, sizeof(report.reason));
     FormatEx(sQuery, sizeof(sQuery), "INSERT INTO `%sreports` (`recordId`, `reporter`, `reason`) VALUES('%d', '%d', '%s');", gS_SQLPrefix, report.recordId, report.reporter, report.reason);
@@ -226,14 +295,14 @@ void UploadReport(report_t report, int client) {
     QueryLog(gH_SQL, SQL_Uploaded, sQuery, pack);
 }
 
-void UpdateReport(report_t report, int client = -1) {
+void SQL_UpdateReport(report_t report, int client = -1) {
     char sQuery[1024];
     FormatEx(sQuery, sizeof(sQuery), "SELECT `report`.*, `clients`.`name` AS 'Recorder', `reportClient`.`name` AS 'Reporter', `times`.`track` , `times`.`style`, `handlerClient`.`name` AS Handler, `times`.`time` FROM `playertimes` AS times INNER JOIN `%sreports` AS report ON (report.recordId=times.id) INNER JOIN `users` AS clients ON (times.auth = clients.auth) LEFT JOIN `users` AS reportClient ON (report.reporter=reportClient.auth) LEFT JOIN `users` AS handlerClient ON (report.handler=handlerClient.auth) WHERE `reason` = '%s' AND `reporter` = '%d' ORDER BY `date` DESC LIMIT 1;", gS_SQLPrefix, report.reason, report.reporter);
     LogMessage("SQL: %s", sQuery);
     QueryLog(gH_SQL, SQL_LoadedReports, sQuery, client);
 }
 
-void ResolveReport(int client, Resolution resolution) {
+void SQL_ResolveReport(int client, Resolution resolution) {
     report_t report;
     if (gI_ActiveReport[client] == -1) {
         Shavit_PrintToChat(client, "%T", "UnknownError", gS_ChatStrings.sWarning, "Invalid report ID", gS_ChatStrings.sText);
@@ -308,7 +377,7 @@ void ResolveReport(int client, Resolution resolution) {
     gI_ActiveReport[client] = 0;
 }
 
-void CheckReportBlacklist(int client) {
+void SQL_CheckBlacklist(int client) {
     char sQuery[256];
     Format(sQuery, sizeof(sQuery),
       "SELECT `id` FROM `%sreports` WHERE `reporter` = '%d' AND `resolution` = '%d' AND `handledDate` > DATE_SUB(NOW(), INTERVAL %d MINUTE) ORDER BY `handledDate` DESC LIMIT 1;",
@@ -340,7 +409,7 @@ void SQL_Uploaded(Database db, DBResultSet results, const char[] error, DataPack
     report_t report;
     hPack.ReadCellArray(report, sizeof(report_t));
     int client = hPack.ReadCell();
-    UpdateReport(report, client);
+    SQL_UpdateReport(report, client);
     delete hPack;
 }
 
@@ -404,8 +473,8 @@ public Action Command_Report(int client, int args) {
     report.date     = GetTime();
     report.reporter = GetSteamAccountID(client);
     strcopy(report.reason, sizeof(report.reason), sArgs[2]);
-    UploadReport(report, client);
-    // UpdateReport(report, client); // Refetch report data to grab ID
+
+    SQL_UploadReport(report, client);
     Shavit_PrintToChat(client, "%T", "ReportSubmitted", client);
     return Plugin_Handled;
 }
@@ -420,14 +489,14 @@ public Action Command_AuditReport(int client, int args) {
     }
     char sId[8];
     GetCmdArg(1, sId, sizeof(sId));
-    AuditReport(client, StringToInt(sId));
+    SQL_AuditReport(client, StringToInt(sId));
     return Plugin_Handled;
 }
 
 public Action Command_ReportStats(int client, int args) {
     if (!IsClientInGame(client))
         return Plugin_Handled;
-    FetchReportStats(client);
+    SQL_FetchReportStats(client);
     return Plugin_Handled;
 }
 
@@ -651,17 +720,17 @@ int MenuHandler_ReportAction(Menu menu, MenuAction action, int param1, int param
     } else if (StrEqual(line, "Reject")) {
         OpenReportRejectMenu(param1);
     } else if (StrEqual(line, "Delete")) {
-        ResolveReport(param1, DELETE);
+        SQL_ResolveReport(param1, DELETE);
     } else if (StrEqual(line, "Ban")) {
-        ResolveReport(param1, BAN);
+        SQL_ResolveReport(param1, BAN);
     } else if (StrEqual(line, "Wipe")) {
-        ResolveReport(param1, WIPE);
+        SQL_ResolveReport(param1, WIPE);
     } else if (StrEqual(line, "RejectReport")) {
-        ResolveReport(param1, REJECT);
+        SQL_ResolveReport(param1, REJECT);
     } else if (StrEqual(line, "Blacklist")) {
-        ResolveReport(param1, BLACKLIST);
+        SQL_ResolveReport(param1, BLACKLIST);
     } else if (StrEqual(line, "Blackban")) {
-        ResolveReport(param1, BLACKBAN);
+        SQL_ResolveReport(param1, BLACKBAN);
     } else
         Shavit_PrintToChat(param1, "%T", "UnknownError", param1, gS_ChatStrings.sWarning, "Invalid MenuItem", gS_ChatStrings.sText);
 
@@ -702,7 +771,7 @@ int MenuHandler_ReportAudit(Menu menu, MenuAction action, int param1, int param2
         QueryLog(gH_SQL, SQL_Void, sQuery);
         for (int i = 1; i <= MaxClients; i++) {
             if (gI_Blacklist[i] == report.id)
-                CheckReportBlacklist(i);
+                SQL_CheckBlacklist(i);
         }
     } else if (StrEqual(item, "Delete")) {
         Shavit_PrintToChat(param1, "%T", "ReportAuditDelete", param1, gS_ChatStrings.sVariable, report.id, gS_ChatStrings.sText);
@@ -842,56 +911,6 @@ int MenuHandler_ReportStats(Menu menu, MenuAction action, int param1, int param2
     return 0;
 }
 
-void SQL_LoadResolutions(Database db, DBResultSet results, const char[] error, DataPack data) {
-    if (results == null) {
-        LogError("SQL error! Reason: %s", error);
-        return;
-    }
-    data.Reset();
-    char title[32];
-    int client = data.ReadCell();
-    data.ReadString(title, sizeof(title));
-    delete data;
-    Panel panel = new Panel();
-    // Menu menu = new Menu(MenuHandler_ReportStatsGeneric);
-    // menu.SetTitle(title);
-    panel.SetTitle(title);
-    char line[32];
-    while (results.FetchRow()) {
-        int resolution = results.FetchInt(0);
-        int count      = results.FetchInt(1);
-        Format(line, sizeof(line), "%s: %d", resolution == -1 ? "Unhandled" : gS_Resolutions[resolution], count);
-        // menu.AddItem("", line, ITEMDRAW_RAWLINE);
-        panel.DrawText(line);
-    }
-    panel.DrawItem("Back");
-    // menu.AddItem("", "cOOL");
-    // menu.Display(client, MENU_TIME_FOREVER);
-    panel.Send(client, MenuHandler_ReportStatsGeneric, MENU_TIME_FOREVER);
-}
-
-void SQL_LoadStringInt(Database db, DBResultSet results, const char[] error, DataPack data) {
-    if (results == null) {
-        LogError("SQL error! Reason: %s", error);
-        return;
-    }
-    data.Reset();
-    char title[32];
-    int client = data.ReadCell();
-    data.ReadString(title, sizeof(title));
-    delete data;
-    Menu menu = new Menu(MenuHandler_ReportStatsGeneric);
-    menu.SetTitle(title);
-    char line[64];
-    while (results.FetchRow()) {
-        char name[MAX_NAME_LENGTH];
-        results.FetchString(0, name, sizeof(name));
-        Format(line, sizeof(line), "%s: %d", name, results.FetchInt(1));
-        menu.AddItem("", line, ITEMDRAW_DISABLED);
-    }
-    menu.Display(client, MENU_TIME_FOREVER);
-}
-
 void SQL_LoadAccuracy(Database db, DBResultSet results, const char[] error, DataPack data) {
     if (results == null) {
         LogError("SQL error! Reason: %s", error);
@@ -930,7 +949,7 @@ int MenuHandler_ReportStatsAccuracy(Menu menu, MenuAction action, int param1, in
             return 0;
         }
         if (param2 == MenuCancel_Exit) {
-            FetchReportStats(param1);
+            SQL_FetchReportStats(param1);
             return 0;
         }
     }
@@ -957,7 +976,7 @@ int MenuHandler_ReportStatsGeneric(Menu menu, MenuAction action, int param1, int
             return 0;
         }
     }
-    FetchReportStats(param1);
+    SQL_FetchReportStats(param1);
     return 0;
 }
 
@@ -980,4 +999,38 @@ void LoadReport(DBResultSet results, report_t buffer) {
     buffer.style = results.FetchInt(11);
     results.FetchString(12, buffer.handlerName, sizeof(buffer.handlerName));
     buffer.time = results.FetchFloat(13);
+}
+
+void PostWebhook(report_t report) {
+    char url[256];
+    gCS_WebhookURL.GetString(url, sizeof(url));
+    if (strlen(url) == 0 || StrContains(url, "discord.com/api/webhooks/") == -1)
+        return;
+    char description[256], time[8], track[32], title[128];
+    GetConVarString(FindConVar("hostname"), title, sizeof(title));
+    char sid[MAX_AUTHID_LENGTH], id[8];
+    IntToString(report.id, id, sizeof(id));
+    FormatSeconds(report.time, time, sizeof(time), false);
+    // GetClientAuthId(report.reporter, AuthId_SteamID64, sid, sizeof(sid));
+    AccountIDToSteamID64(report.reporter, sid, sizeof(sid));
+    Format(description, sizeof(description),
+      "**[%s](http://www.steamcommunity.com/profiles/%s)** reported",
+      report.reporterName, sid);
+    AccountIDToSteamID64(report.reported, sid, sizeof(sid));
+    GetTrackName(LANG_SERVER, report.track, track, sizeof(track));
+    Format(description, sizeof(description),
+      "%s **[%s](http://www.steamcommunity.com/profiles/%s)'s** %s %s %s record.",
+      description, report.targetName, sid, time, gS_StyleStrings[report.style], track);
+    DiscordWebHook hook = new DiscordWebHook(url);
+    hook.SetUsername("BHop Reports");
+    MessageEmbed embed = new MessageEmbed();
+    embed.SetColor("10158080");
+    embed.SetDescription(description);
+    embed.SetTitle(title);
+    embed.AddField("Map", gS_MapName, true);
+    embed.AddField("Reason", report.reason, true);
+    embed.AddField("ID", id, true);
+    hook.Embed(embed);
+    hook.Send();
+    delete hook;
 }
