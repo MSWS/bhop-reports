@@ -14,6 +14,7 @@ A reporting system for [Shavit's BHop Timer](https://github.com/shavitush/bhopti
 - In-game handling of reports with menu assist
 - Report auditing
 - Report blacklisting
+- Report statistics
 
 ## Commands
 - `sm_report <track> <style> <reason`
@@ -26,4 +27,6 @@ A reporting system for [Shavit's BHop Timer](https://github.com/shavitush/bhopti
   - Shows the specified report and its details
   - Allows admins to override previous resolutions
   - Accessible to players that have the ADMFLAG_CHEAT flag
-  - \*Currently in development
+- `sm_reportstats`
+  - Shows report statistics by map, reporter, reported, handler, etc.
+  - Accessible to players that have the ADMFLAG_GENERIC flag
