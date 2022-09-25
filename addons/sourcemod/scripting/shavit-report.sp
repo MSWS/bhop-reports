@@ -65,6 +65,7 @@ public void OnPluginStart() {
     RegAdminCmd("sm_reports", Command_Reports, ADMFLAG_BAN, "View player reports");
     RegAdminCmd("sm_audit", Command_AuditReport, ADMFLAG_CHEATS, "Audit reports");
     RegAdminCmd("sm_auditreport", Command_AuditReport, ADMFLAG_CHEATS, "Audit reports");
+    RegAdminCmd("sm_reportstats", Command_ReportStats, ADMFLAG_GENERIC, "View report stats");
     RegConsoleCmd("sm_report", Command_Report, "Report a player's record");
 
     gCS_BanReason         = CreateConVar("shavit_reports_reason", "#{id} Record Violation", "Report ban reason");
@@ -159,16 +160,22 @@ void SQL_LoadedTotalStats(Database db, DBResultSet results, const char[] error, 
         LogError("Timer error! Failed to load report data. Reason: %s", error);
         return;
     }
+    if (!results.FetchRow()) {
+        Shavit_PrintToChat(client, "%T", "UnknownError", client, gS_ChatStrings.sWarning, "No report data found", gS_ChatStrings.sWarning);
+        return;
+    }
     int total   = results.FetchInt(0);
     int handled = results.FetchInt(1);
     Menu menu   = CreateMenu(MenuHandler_ReportStats);
-    menu.SetTitle("Report Stats\nHandled: %d/%d (%.2f%%)", handled, total, (handled / total) * 100);
-    menu.AddItem("reporters", "Biggest Reporters");
-    menu.AddItem("reported", "Most Reported");
-    menu.AddItem("accuracy", "Most Accurate Reporters");
-    menu.AddItem("handlers", "Biggest Handlers");
-    menu.AddItem("maps", "Most Reported Maps");
-    menu.AddItem("resolutions", "Resolution Stats");
+
+    menu.SetTitle("Report Stats\nHandled: %d/%d (%.2f%%)", handled, total, (float(handled) / total) * 100.0);
+    menu.AddItem("reporters", "Reporters");
+    menu.AddItem("reported", "Reported");
+    menu.AddItem("accuracy", "Accuracy");
+    menu.AddItem("handlers", "Handlers");
+    menu.AddItem("maps", "Maps");
+    menu.AddItem("resolutions", "Resolutions");
+    menu.Display(client, MENU_TIME_FOREVER);
 }
 
 void SQL_LoadedReports(Database db, DBResultSet results, const char[] error, int reporter = -1) {
@@ -414,6 +421,13 @@ public Action Command_AuditReport(int client, int args) {
     char sId[8];
     GetCmdArg(1, sId, sizeof(sId));
     AuditReport(client, StringToInt(sId));
+    return Plugin_Handled;
+}
+
+public Action Command_ReportStats(int client, int args) {
+    if (!IsClientInGame(client))
+        return Plugin_Handled;
+    FetchReportStats(client);
     return Plugin_Handled;
 }
 
@@ -781,49 +795,93 @@ int MenuHandler_ReportStats(Menu menu, MenuAction action, int param1, int param2
             delete menu;
         return 0;
     }
-    char sInfo[16];
-    menu.GetItem(param2, sInfo, 8);
+    char sInfo[16], sTitle[32];
+    menu.GetItem(param2, sInfo, sizeof(sInfo), _, sTitle, sizeof(sTitle));
+
     char sQuery[1024];
+    DataPack data = new DataPack();
+    data.WriteCell(param1);
+    data.WriteString(sTitle);
     if (StrEqual(sInfo, "reporters")) {
-        // Username | Reports SELECT `reporter`, COUNT(*) FROM `reports` GROUP BY `reporter` ORDER BY COUNT(*) DESC LIMIT 50;
         FormatEx(sQuery, sizeof(sQuery),
-          "SELECT `reporter`, COUNT(*) FROM `%sreports` GROUP BY `reporter` ORDER BY COUNT(*) DESC LIMIT 50;", gS_SQLPrefix);
-        QueryLog(gH_SQL, SQL_LoadReporters, sQuery, param1);
+          "SELECT usr.name, COUNT(*) FROM `reports` LEFT JOIN `users` AS usr ON (usr.auth = reports.reporter) GROUP BY `reporter` ORDER BY COUNT(*) DESC LIMIT 50;", gS_SQLPrefix);
+        QueryLog(gH_SQL, SQL_LoadStringInt, sQuery, data);
     } else if (StrEqual(sInfo, "reported")) {
-        // (Target) Username | Reports SELECT usr.name, COUNT(*) FROM `reports` LEFT JOIN `playertimes` AS pt ON (pt.id = recordId) LEFT JOIN `users` AS usr ON (usr.auth = pt.auth) GROUP BY pt.auth ORDER BY COUNT(*) DESC LIMIT 50;
         FormatEx(sQuery, sizeof(sQuery),
           "SELECT usr.name, COUNT(*) FROM `%sreports` LEFT JOIN `%splayertimes` AS pt ON (pt.id = recordId) LEFT JOIN `%susers` AS usr ON (usr.auth = pt.auth) GROUP BY pt.auth ORDER BY COUNT(*) DESC LIMIT 50;",
           gS_SQLPrefix, gS_SQLPrefix, gS_SQLPrefix);
+        QueryLog(gH_SQL, SQL_LoadStringInt, sQuery, data);
     } else if (StrEqual(sInfo, "accuracy")) {
-        // Username | Amount | Resolution SELECT `reporter`, COUNT(*), `resolution` FROM `reports` WHERE `handler` IS NOT NULL GROUP BY `reporter`, `resolution`;
         FormatEx(sQuery, sizeof(sQuery),
-          "SELECT `reporter`, COUNT(*), `resolution` FROM `%sreports` WHERE `handler` IS NOT NULL GROUP BY `reporter`, `resolution`;", gS_SQLPrefix);
+          "SELECT usr.name,\
+            COUNT(CASE WHEN `resolution` = '-1' THEN 1 ELSE NULL END) AS '-1',	\
+            COUNT(CASE WHEN `resolution` = '0' THEN 1 ELSE NULL END) AS '0',	\
+            COUNT(CASE WHEN `resolution` = '1' THEN 1 ELSE NULL END) AS '1',	\
+            COUNT(CASE WHEN `resolution` = '2' THEN 1 ELSE NULL END) AS '2',	\
+            COUNT(CASE WHEN `resolution` = '3' THEN 1 ELSE NULL END) AS '3',	\
+            COUNT(CASE WHEN `resolution` = '4' THEN 1 ELSE NULL END) AS '4',\
+            COUNT(CASE WHEN `resolution` = '5' THEN 1 ELSE NULL END) AS '5',\
+	        COUNT(CASE WHEN `resolution` < 3 AND `resolution` >= 0 THEN 1 ELSE NULL END) AS 'Accepted', \
+            COUNT(*)\
+            FROM `reports` LEFT JOIN `users` AS usr ON (reports.reporter = usr.auth) GROUP BY `reporter` ORDER BY `Accepted` DESC;");
+        QueryLog(gH_SQL, SQL_LoadAccuracy, sQuery, data);
     } else if (StrEqual(sInfo, "handlers")) {
-        // Username | Handled SELECT `handler`, COUNT(*) FROM `reports` WHERE `handler` IS NOT NULL GROUP BY `handler` ORDER BY COUNT(*) DESC LIMIT 50;
         FormatEx(sQuery, sizeof(sQuery),
-          "SELECT `handler`, COUNT(*) FROM `%sreports` WHERE `handler` IS NOT NULL GROUP BY `handler` ORDER BY COUNT(*) DESC LIMIT 50;", gS_SQLPrefix);
+          "SELECT usr.name, COUNT(*) FROM `reports` LEFT JOIN `users` AS usr ON (usr.auth = reports.handler) WHERE `handler` IS NOT NULL GROUP BY `handler` ORDER BY COUNT(*) DESC LIMIT 50;", gS_SQLPrefix);
+        QueryLog(gH_SQL, SQL_LoadStringInt, sQuery, data);
     } else if (StrEqual(sInfo, "maps")) {
-        // Amount | Map SELECT COUNT(*), `record`.`map` FROM `reports` LEFT JOIN `playertimes` AS record ON (record.id = reports.recordId) GROUP BY(`record`.`map`) ORDER BY COUNT(*) DESC LIMIT 50;
         FormatEx(sQuery, sizeof(sQuery),
-          "SELECT COUNT(*), `record`.`map` FROM `%sreports` LEFT JOIN `%splayertimes` AS record ON (record.id = reports.recordId) GROUP BY(`record`.`map`) ORDER BY COUNT(*) DESC LIMIT 50;",
+          "SELECT `record`.`map`, COUNT(*) FROM `%sreports` LEFT JOIN `%splayertimes` AS record ON (record.id = reports.recordId) GROUP BY(`record`.`map`) ORDER BY COUNT(*) DESC LIMIT 50;",
           gS_SQLPrefix, gS_SQLPrefix);
+        QueryLog(gH_SQL, SQL_LoadStringInt, sQuery, data);
     } else if (StrEqual(sInfo, "resolutions")) {
-        // Amount | Resolution SELECT COUNT(*), `resolution` FROM `reports` WHERE `handler` IS NOT NULL GROUP BY `resolution`;
         FormatEx(sQuery, sizeof(sQuery),
-          "SELECT COUNT(*), `resolution` FROM `%sreports` WHERE `handler` IS NOT NULL GROUP BY `resolution`;", gS_SQLPrefix);
+          "SELECT `resolution`, COUNT(*) FROM `%sreports` GROUP BY `resolution` ORDER BY COUNT(*) DESC;", gS_SQLPrefix);
+        QueryLog(gH_SQL, SQL_LoadResolutions, sQuery, data);
     }
-
     return 0;
 }
 
-void SQL_LoadReporters(Database db, DBResultSet results, const char[] error, int client) {
+void SQL_LoadResolutions(Database db, DBResultSet results, const char[] error, DataPack data) {
     if (results == null) {
         LogError("SQL error! Reason: %s", error);
         return;
     }
+    data.Reset();
+    char title[32];
+    int client = data.ReadCell();
+    data.ReadString(title, sizeof(title));
+    delete data;
+    Panel panel = new Panel();
+    // Menu menu = new Menu(MenuHandler_ReportStatsGeneric);
+    // menu.SetTitle(title);
+    panel.SetTitle(title);
+    char line[32];
+    while (results.FetchRow()) {
+        int resolution = results.FetchInt(0);
+        int count      = results.FetchInt(1);
+        Format(line, sizeof(line), "%s: %d", resolution == -1 ? "Unhandled" : gS_Resolutions[resolution], count);
+        // menu.AddItem("", line, ITEMDRAW_RAWLINE);
+        panel.DrawText(line);
+    }
+    panel.DrawItem("Back");
+    // menu.AddItem("", "cOOL");
+    // menu.Display(client, MENU_TIME_FOREVER);
+    panel.Send(client, MenuHandler_ReportStatsGeneric, MENU_TIME_FOREVER);
+}
 
-    Menu menu = new Menu(MenuHandler_ReportStats);
-    menu.SetTitle("Biggets Reporters (%d)", results.RowCount);
+void SQL_LoadStringInt(Database db, DBResultSet results, const char[] error, DataPack data) {
+    if (results == null) {
+        LogError("SQL error! Reason: %s", error);
+        return;
+    }
+    data.Reset();
+    char title[32];
+    int client = data.ReadCell();
+    data.ReadString(title, sizeof(title));
+    delete data;
+    Menu menu = new Menu(MenuHandler_ReportStatsGeneric);
+    menu.SetTitle(title);
     char line[64];
     while (results.FetchRow()) {
         char name[MAX_NAME_LENGTH];
@@ -832,6 +890,75 @@ void SQL_LoadReporters(Database db, DBResultSet results, const char[] error, int
         menu.AddItem("", line, ITEMDRAW_DISABLED);
     }
     menu.Display(client, MENU_TIME_FOREVER);
+}
+
+void SQL_LoadAccuracy(Database db, DBResultSet results, const char[] error, DataPack data) {
+    if (results == null) {
+        LogError("SQL error! Reason: %s", error);
+        return;
+    }
+    data.Reset();
+    char title[32];
+    int client = data.ReadCell();
+    data.ReadString(title, sizeof(title));
+    delete data;
+    Menu menu = new Menu(MenuHandler_ReportStatsAccuracy);
+    menu.SetTitle(title);
+    // name `-1` `0` `1` `2` `3` `4` `5` Accepted `COUNT(*)`
+
+    while (results.FetchRow()) {
+        int ints[7];
+        for (int i = 1; i < 8; i++)
+            ints[i - 1] = results.FetchInt(i);
+        char name[MAX_NAME_LENGTH];
+        results.FetchString(0, name, sizeof(name));
+        int total      = results.FetchInt(9);
+        int accepted   = results.FetchInt(8);
+        float accuracy = (total == 0.0) ? 0.0 : (float(accepted) * 100.0 / total);
+        char line[64], info[64];
+        Format(line, sizeof(line), "%s: %.2f%% (%d/%d)", name, accuracy, accepted, total);
+        Format(info, sizeof(info), "%d;%d;%d;%d;%d;%d;%d", ints[0], ints[1], ints[2], ints[3], ints[4], ints[5], ints[6]);
+        menu.AddItem(info, line, ITEMDRAW_DEFAULT);
+    }
+    menu.Display(client, MENU_TIME_FOREVER);
+}
+
+int MenuHandler_ReportStatsAccuracy(Menu menu, MenuAction action, int param1, int param2) {
+    if (action != MenuAction_Select) {
+        if (action == MenuAction_End) {
+            delete menu;
+            return 0;
+        }
+        if (param2 == MenuCancel_Exit) {
+            FetchReportStats(param1);
+            return 0;
+        }
+    }
+    Menu newMenu = new Menu(MenuHandler_ReportStatsGeneric);
+    char info[64];
+    GetMenuItem(menu, param2, info, sizeof(info));
+    char sInf[7][4];
+    ExplodeString(info, ";", sInf, sizeof(sInf), sizeof(sInf[]));
+    int[] ints = new int[sizeof(sInf)];
+    char line[32];
+    for (int i = 0; i < sizeof(sInf); i++) {
+        ints[i] = StringToInt(sInf[i]);
+        Format(line, sizeof(line), "%s: %d", i == 0 ? "Unhandled" : gS_Resolutions[i - 1], ints[i]);
+        newMenu.AddItem("", line, ITEMDRAW_DISABLED);
+    }
+    newMenu.Display(param1, MENU_TIME_FOREVER);
+    return 0;
+}
+
+int MenuHandler_ReportStatsGeneric(Menu menu, MenuAction action, int param1, int param2) {
+    if (action != MenuAction_Select) {
+        if (action == MenuAction_End) {
+            delete menu;
+            return 0;
+        }
+    }
+    FetchReportStats(param1);
+    return 0;
 }
 
 /**
