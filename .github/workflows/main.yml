@@ -2,8 +2,6 @@ name: SourceMod Plugin Workflow
 
 on:
   push:
-    branches:
-    - "*"
   pull_request:
     branches:
     - 'main'
