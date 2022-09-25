@@ -375,9 +375,15 @@ void SQL_ResolveReport(int client, Resolution resolution) {
 
 void SQL_CheckBlacklist(int client) {
     char sQuery[256];
-    Format(sQuery, sizeof(sQuery),
-      "SELECT `id` FROM `%sreports` WHERE `reporter` = '%d' AND `resolution` = '%d' AND `handledDate` > DATE_SUB(NOW(), INTERVAL %d MINUTE) ORDER BY `handledDate` DESC LIMIT 1;",
-      gS_SQLPrefix, GetSteamAccountID(client), view_as<int>(BLACKLIST), RoundFloat(gCF_BlacklistDuration.FloatValue));
+    if (gCF_BlacklistDuration.FloatValue <= 0.0) {
+        Format(sQuery, sizeof(sQuery),
+          "SELECT `id` FROM `%sreports` WHERE `reporter` = '%d' AND `resolution` = '%d' AND `handledDate` > DATE_SUB(NOW(), INTERVAL %d MINUTE) ORDER BY `handledDate` DESC LIMIT 1;",
+          gS_SQLPrefix, GetSteamAccountID(client), view_as<int>(BLACKLIST), RoundFloat(gCF_BlacklistDuration.FloatValue));
+    } else {
+        Format(sQuery, sizeof(sQuery),
+          "SELECT `id` FROM `%sreports` WHERE `reporter` = '%d' AND `resolution` = '%d' ORDER BY `handledDate` DESC LIMIT 1;",
+          gS_SQLPrefix, GetSteamAccountID(client), view_as<int>(BLACKLIST));
+    }
     QueryLog(gH_SQL, SQL_BlacklistCheck, sQuery, client);
 }
 
