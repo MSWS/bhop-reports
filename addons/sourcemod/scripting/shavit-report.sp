@@ -357,7 +357,9 @@ void SQL_ResolveReport(int client, Resolution resolution) {
     char sQuery[256];
 
     // id recordId reporter reason `date` handler resolution handledDate Recorder Reporter track `style`
-    report.handler = GetSteamAccountID(client);
+    report.handler    = GetSteamAccountID(client);
+    Format(report.handlerName, sizeof(report.handlerName), "%N", client);
+    report.resolution = resolution;
     Format(sQuery, sizeof(sQuery),
       "UPDATE `%sreports` SET `handler` = '%d', `resolution` = '%d', `handledDate` = NOW() WHERE `id` = '%d';",
       gS_SQLPrefix, report.handler, view_as<int>(resolution), report.id);
@@ -371,6 +373,7 @@ void SQL_ResolveReport(int client, Resolution resolution) {
             gI_ActiveReport[i]--;
     }
     gI_ActiveReport[client] = -1;
+    PostUpdate(report);
 }
 
 void SQL_CheckBlacklist(int client) {
@@ -549,7 +552,9 @@ void OpenReportViewMenu(int client, int reportIndex = -1) {
 
 void OpenReportAcceptMenu(int client) {
     Menu menu = new Menu(MenuHandler_ReportAction);
-    menu.SetTitle("Accepting Report #%d\nWhat action should be taken?", gI_ActiveReport[client]);
+    report_t report;
+    gH_Reports.GetArray(gI_ActiveReport[client], report);
+    menu.SetTitle("Accepting Report #%d\nWhat action should be taken?", report.id);
     menu.AddItem("Delete", "Delete the record.");
     menu.AddItem("Ban", "Delete and ban the player.", CheckCommandAccess(client, "sm_ban", ADMFLAG_BAN) ? ITEMDRAW_DEFAULT : ITEMDRAW_DISABLED);
     menu.AddItem("Wipe", "Delete, ban, and wipe the player's records.", CheckCommandAccess(client, "sm_wipeplayer", ADMFLAG_RCON) ? ITEMDRAW_DEFAULT : ITEMDRAW_DISABLED);
@@ -558,7 +563,9 @@ void OpenReportAcceptMenu(int client) {
 
 void OpenReportRejectMenu(int client) {
     Menu menu = new Menu(MenuHandler_ReportAction);
-    menu.SetTitle("Rejecting Report #%d\nWhat action should be taken?", gI_ActiveReport[client]);
+    report_t report;
+    gH_Reports.GetArray(gI_ActiveReport[client], report);
+    menu.SetTitle("Rejecting Report #%d\nWhat action should be taken?", report.id);
     menu.AddItem("RejectReport", "Reject the report.");
     menu.AddItem("Blacklist", "Reject and blacklist the reporter.", CheckCommandAccess(client, "sm_kick", ADMFLAG_KICK) ? ITEMDRAW_DEFAULT : ITEMDRAW_DISABLED);
     menu.AddItem("Blackban", "Reject and ban the reporter.", CheckCommandAccess(client, "sm_ban", ADMFLAG_BAN) ? ITEMDRAW_DEFAULT : ITEMDRAW_DISABLED);
@@ -1038,4 +1045,69 @@ void PostWebhook(report_t report) {
     hook.Embed(embed);
     hook.Send();
     delete hook;
+}
+
+void PostUpdate(report_t report) {
+    char url[256];
+    gCS_WebhookURL.GetString(url, sizeof(url));
+    if (strlen(url) == 0 || StrContains(url, "discord.com/api/webhooks/") == -1)
+        return;
+    char description[512], time[8], track[32], title[128];
+    GetConVarString(FindConVar("hostname"), title, sizeof(title));
+    char sid[MAX_AUTHID_LENGTH], id[8];
+    IntToString(report.id, id, sizeof(id));
+    FormatSeconds(report.time, time, sizeof(time), false);
+    AccountIDToSteamID64(report.handler, sid, sizeof(sid));
+    Format(description, sizeof(description),
+      "**[%s](http://www.steamcommunity.com/profiles/%s)**",
+      report.handlerName, sid);
+    AccountIDToSteamID64(report.reported, sid, sizeof(sid));
+    GetTrackName(LANG_SERVER, report.track, track, sizeof(track));
+    char action[32];
+
+    bool accept = FormatResolution(report, action, sizeof(action));
+
+    Format(description, sizeof(description),
+      "%s %s **[%s](http://www.steamcommunity.com/profiles/%s)'s** %s %s %s report.",
+      description, accept ? "accepted" : "rejected", report.reporterName, sid, time, gS_StyleStrings[report.style], track);
+
+    Format(description, sizeof(description), "%s\n**Resolution:** %s", description, action);
+
+    DiscordWebHook hook = new DiscordWebHook(url);
+    hook.SetUsername("BHop Reports");
+    MessageEmbed embed = new MessageEmbed();
+    embed.SetColor(accept ? "62975" : "8257536");
+    embed.SetDescription(description);
+    embed.SetTitle(title);
+    embed.AddField("Map", gS_MapName, true);
+    embed.AddField("Reason", report.reason, true);
+    embed.AddField("ID", id, true);
+    hook.Embed(embed);
+    hook.Send();
+    delete hook;
+}
+
+bool FormatResolution(report_t report, char[] buffer, int size) {
+    bool accept = false;
+    switch (report.resolution) {
+        case DELETE: {
+            Format(buffer, size, "Deleted Record");
+            accept = true;
+        }
+        case BAN: {
+            Format(buffer, size, "Deleted Record and Banned User");
+            accept = true;
+        }
+        case WIPE: {
+            Format(buffer, size, "Deleted Record and Wiped User's Data");
+            accept = true;
+        }
+        case REJECT:
+            Format(buffer, size, "Rejected Report");
+        case BLACKLIST:
+            Format(buffer, size, "Rejected and Blacklisted Reporter");
+        case BLACKBAN:
+            Format(buffer, size, "Rejected and Banned Reporter");
+    }
+    return accept;
 }
