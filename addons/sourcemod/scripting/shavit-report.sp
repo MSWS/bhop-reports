@@ -196,7 +196,7 @@ void SQL_LoadStringInt(Database db, DBResultSet results, const char[] error, Dat
 void SQL_CreateSQL() {
     char sQuery[512];
     FormatEx(sQuery, sizeof(sQuery),
-      "CREATE TABLE IF NOT EXISTS `%sreports` (`id` INT AUTO_INCREMENT NOT NULL, `recordId` INT NOT NULL, `reporter` INT NOT NULL, `reason` VARCHAR(128) NOT NULL, `date` TIMESTAMP NOT NULL DEFAULT NOW(), `handler` INT, `resolution` INT DEFAULT -1, `handledDate` TIMESTAMP, PRIMARY KEY (`id`), FOREIGN KEY (`reporter`) REFERENCES %susers(`auth`), FOREIGN KEY (`recordId`) REFERENCES %splayertimes(`id`) ON DELETE SET NULL, FOREIGN KEY (`handler`) REFERENCES %susers(`auth`));",
+      "CREATE TABLE IF NOT EXISTS `%sreports` (`id` INT AUTO_INCREMENT NOT NULL, `recordId` INT NOT NULL, `reporter` INT NOT NULL, `reason` VARCHAR(128) NOT NULL, `date` TIMESTAMP NOT NULL DEFAULT NOW(), `handler` INT, `resolution` INT DEFAULT -1, `handledDate` TIMESTAMP, PRIMARY KEY (`id`), FOREIGN KEY (`reporter`) REFERENCES %susers(`auth`), FOREIGN KEY (`recordId`) REFERENCES %splayertimes(`id`) ON DELETE CASCADE, FOREIGN KEY (`handler`) REFERENCES %susers(`auth`));",
       gS_SQLPrefix, gS_SQLPrefix, gS_SQLPrefix, gS_SQLPrefix);
     QueryLog(gH_SQL, SQL_Void, sQuery);
 }
@@ -1004,7 +1004,7 @@ int MenuHandler_ReportStatsGeneric(Menu menu, MenuAction action, int param1, int
 void LoadReport(DBResultSet results, report_t buffer) {
     // id recordId reporter reason `date` handler resolution handledDate Recorder Reporter track `style` HandlerName time
     buffer.id       = results.FetchInt(0);
-    buffer.recordId = SQL_IsFieldNull(results, 1) ? -1 : results.FetchInt(1);
+    buffer.recordId = results.FetchInt(1);
     buffer.reporter = results.FetchInt(2);
     results.FetchString(3, buffer.reason, sizeof(buffer.reason));
     buffer.date        = results.FetchInt(4);
