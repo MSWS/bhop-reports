@@ -196,7 +196,7 @@ void SQL_LoadStringInt(Database db, DBResultSet results, const char[] error, Dat
 void SQL_CreateSQL() {
     char sQuery[512];
     FormatEx(sQuery, sizeof(sQuery),
-      "CREATE TABLE IF NOT EXISTS `%sreports` (`id` INT AUTO_INCREMENT NOT NULL, `recordId` INT NOT NULL, `reporter` INT NOT NULL, `reason` VARCHAR(128) NOT NULL, `date` TIMESTAMP NOT NULL DEFAULT NOW(), `handler` INT, `resolution` INT DEFAULT -1, `handledDate` TIMESTAMP, PRIMARY KEY (`id`), FOREIGN KEY (`reporter`) REFERENCES %susers(`auth`), FOREIGN KEY (`recordId`) REFERENCES %splayertimes(`id`) ON DELETE CASCADE, FOREIGN KEY (`handler`) REFERENCES %susers(`auth`));",
+      "CREATE TABLE IF NOT EXISTS `%sreports` (`id` INT AUTO_INCREMENT NOT NULL, `recordId` INT NOT NULL, `reporter` INT NOT NULL, `reason` VARCHAR(128) NOT NULL, `date` TIMESTAMP NOT NULL DEFAULT NOW(), `handler` INT, `resolution` INT DEFAULT -1, `handledDate` TIMESTAMP, PRIMARY KEY (`id`), FOREIGN KEY (`reporter`) REFERENCES %susers(`auth`), FOREIGN KEY (`recordId`) REFERENCES %splayertimes(`id`) ON DELETE SET NULL, FOREIGN KEY (`handler`) REFERENCES %susers(`auth`));",
       gS_SQLPrefix, gS_SQLPrefix, gS_SQLPrefix, gS_SQLPrefix);
     QueryLog(gH_SQL, SQL_Void, sQuery);
 }
@@ -309,6 +309,7 @@ void SQL_ResolveReport(int client, Resolution resolution) {
     gH_Reports.GetArray(gI_ActiveReport[client], report);
     switch (resolution) {
         case DELETE: {
+            PrintToChat(client, "Delete called");
             Shavit_DeleteWR(report.style, report.track, gS_MapName, -1, -1, true, true);
             Shavit_PrintToChat(client, "%T", "ReportHandleAccept", client, gS_ChatStrings.sVariable, report.id, gS_ChatStrings.sText, gS_ChatStrings.sWarning, report.targetName, gS_ChatStrings.sText);
         }
@@ -357,7 +358,7 @@ void SQL_ResolveReport(int client, Resolution resolution) {
     char sQuery[256];
 
     // id recordId reporter reason `date` handler resolution handledDate Recorder Reporter track `style`
-    report.handler    = GetSteamAccountID(client);
+    report.handler = GetSteamAccountID(client);
     Format(report.handlerName, sizeof(report.handlerName), "%N", client);
     report.resolution = resolution;
     Format(sQuery, sizeof(sQuery),
@@ -370,7 +371,7 @@ void SQL_ResolveReport(int client, Resolution resolution) {
         if (active == gI_ActiveReport[client])
             gI_ActiveReport[i] = -1;
         if (active > gI_ActiveReport[client])
-            gI_ActiveReport[i]--;
+            gI_ActiveReport[i] = gI_ActiveReport[i] - 1;
     }
     gI_ActiveReport[client] = -1;
     PostUpdate(report);
@@ -811,6 +812,10 @@ int MenuHandler_ReportAudit(Menu menu, MenuAction action, int param1, int param2
             if (act > active)
                 gI_ActiveReport[i]--;
         }
+        for (int i = 1; i <= MaxClients; i++) {
+            if (gI_Blacklist[i] == report.id)
+                SQL_CheckBlacklist(i);
+        }
     } else
         Shavit_PrintToChat(param1, "%T", "UnknownError", param1, gS_ChatStrings.sWarning, "Invalid MenuItem", gS_ChatStrings.sText);
     return 0;
@@ -999,7 +1004,7 @@ int MenuHandler_ReportStatsGeneric(Menu menu, MenuAction action, int param1, int
 void LoadReport(DBResultSet results, report_t buffer) {
     // id recordId reporter reason `date` handler resolution handledDate Recorder Reporter track `style` HandlerName time
     buffer.id       = results.FetchInt(0);
-    buffer.recordId = results.FetchInt(1);
+    buffer.recordId = SQL_IsFieldNull(results, 1) ? -1 : results.FetchInt(1);
     buffer.reporter = results.FetchInt(2);
     results.FetchString(3, buffer.reason, sizeof(buffer.reason));
     buffer.date        = results.FetchInt(4);
